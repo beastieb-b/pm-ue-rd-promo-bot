@@ -92,11 +92,11 @@ app.get('/api/log', (req, res) => {
 });
 
 app.get('/api/queue', (req, res) => {
-  res.json({ queue: state.getQueue() });
+  res.json({ queue: state.getQueueDetails() });
 });
 
 app.get('/api/processed', (req, res) => {
-  res.json({ processed: state.getProcessed() });
+  res.json({ processed: state.getProcessedDetails() });
 });
 
 app.get('/api/settings', (req, res) => {

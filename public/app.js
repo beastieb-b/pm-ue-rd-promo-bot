@@ -116,7 +116,7 @@ function renderOverview() {
   if (stats.threadId) {
     tb.textContent = `Thread: ${stats.threadId} · ${formatMonth(stats.threadMonth)}`;
   } else {
-    tb.textContent = 'No thread loaded — run Reddit check';
+    tb.textContent = 'No thread loaded — run a source scan';
   }
 
   const successEl = document.getElementById('success-list');
@@ -137,16 +137,19 @@ function renderOverview() {
     feed.innerHTML = recent.map(r => {
       const icon = r.result === 'success' ? '✅' : r.result === 'ratelimited' ? '⏳' : '❌';
       const detail = r.detail ? `<span style="color:var(--label-3)"> · ${escapeHtml(r.detail)}</span>` : '';
+      const source = r.sourceLabel ? `<span class="inline-meta-pill">${escapeHtml(r.sourceLabel)}</span>` : '';
       const when = r.ts ? `<span style="color:var(--label-3);font-size:11px;margin-left:auto;white-space:nowrap">${timeAgo(new Date(r.ts))}</span>` : '';
       return `<div class="activity-item">
         <span class="activity-dot dot-${cssToken(r.result)}"></span>
-        <span class="activity-text">${icon} <strong>${escapeHtml(r.code)}</strong> — ${escapeHtml(resultLabel(r.result))}${detail}</span>
+        <span class="activity-text">${icon} <strong>${escapeHtml(r.code)}</strong> — ${escapeHtml(resultLabel(r.result))}${detail} ${source}</span>
         ${when}
       </div>`;
     }).join('');
   } else {
     feed.innerHTML = '<div class="empty-state">No activity yet</div>';
   }
+
+  renderMonitoredSources(stats.monitoredSources || []);
 }
 
 function renderScanStatus() {
@@ -321,7 +324,7 @@ function renderSettings() {
       if (label) label.textContent = `Thread: ${threadId}  ·  ${formatMonth(month)}`;
       if (link) { link.href = `https://www.reddit.com/r/${subreddit}/comments/${threadId}/`; link.style.display = ''; }
     } else {
-      if (label) label.textContent = 'No thread detected — run a Reddit check';
+      if (label) label.textContent = 'No thread detected — run a source scan';
       if (link) link.style.display = 'none';
     }
   }
@@ -345,10 +348,10 @@ function updateNextRunLabel() {
   if (!el) return;
   const h = currentSettings.scanIntervalHours;
   const label = h < 1
-    ? `Scanning every ${h * 60} minutes`
+    ? `Scanning sources every ${h * 60} minutes`
     : h === 1
-    ? 'Scanning every hour'
-    : `Scanning every ${h} hours`;
+    ? 'Scanning sources every hour'
+    : `Scanning sources every ${h} hours`;
   el.textContent = label;
 }
 
@@ -358,26 +361,48 @@ function renderQueue(queue) {
   count.textContent = `${queue.length} code${queue.length !== 1 ? 's' : ''}`;
 
   if (!queue.length) {
-    el.innerHTML = '<div class="empty-state">Queue is empty — run a Reddit check to find codes</div>';
+    el.innerHTML = '<div class="empty-state">Queue is empty — run a source scan to find codes</div>';
     return;
   }
 
   el.innerHTML = '';
-  queue.forEach(code => {
+  queue.forEach(entry => {
+    const code = typeof entry === 'string' ? entry : entry.code;
+    const meta = typeof entry === 'string' ? {} : entry;
     const row = document.createElement('div');
     row.className = 'queue-item';
     row.id = `q-${cssToken(code)}`;
 
-    const codeEl = document.createElement('span');
+    const body = document.createElement('div');
+    body.className = 'queue-main';
+
+    const codeEl = document.createElement('div');
     codeEl.className = 'queue-code';
     codeEl.textContent = code;
+
+    const metaRow = document.createElement('div');
+    metaRow.className = 'queue-meta';
+    metaRow.innerHTML = [
+      meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
+      meta.confidenceLabel ? `<span class="meta-pill confidence confidence-${cssToken(meta.confidenceLabel.toLowerCase())}">${escapeHtml(meta.confidenceLabel)} confidence</span>` : '',
+      meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
+      meta.region ? `<span class="meta-pill">${escapeHtml(meta.region)}</span>` : '',
+      meta.expiresAt ? `<span class="meta-pill">Expires ${escapeHtml(meta.expiresAt)}</span>` : '',
+      meta.lastSeenAt ? `<span class="meta-pill">Seen ${escapeHtml(timeAgo(new Date(meta.lastSeenAt)))}</span>` : '',
+    ].filter(Boolean).join('');
+
+    const noteEl = document.createElement('div');
+    noteEl.className = 'queue-note';
+    noteEl.textContent = meta.statusNote || meta.sourceTitle || '';
 
     const btn = document.createElement('button');
     btn.className = 'btn btn-danger btn-sm';
     btn.textContent = 'Remove';
     btn.addEventListener('click', () => removeCode(code));
 
-    row.append(codeEl, btn);
+    body.append(codeEl, metaRow);
+    if (noteEl.textContent) body.appendChild(noteEl);
+    row.append(body, btn);
     el.appendChild(row);
   });
 }
@@ -391,7 +416,7 @@ function renderResults() {
     : processed.filter(r => r.result === activeFilter);
 
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No ${activeFilter === 'all' ? '' : activeFilter + ' '}results yet</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No ${activeFilter === 'all' ? '' : activeFilter + ' '}results yet</td></tr>`;
     return;
   }
 
@@ -403,7 +428,19 @@ function renderResults() {
 
     const codeCell = document.createElement('td');
     codeCell.className = 'result-code';
-    codeCell.textContent = r.code;
+    codeCell.innerHTML = `
+      <div class="result-code-stack">
+        <div class="result-code-value">${escapeHtml(r.code)}</div>
+        ${r.confidenceLabel ? `<div class="result-submeta">${escapeHtml(r.confidenceLabel)} confidence</div>` : ''}
+      </div>
+    `;
+
+    const sourceCell = document.createElement('td');
+    sourceCell.className = 'result-source';
+    sourceCell.innerHTML = `
+      <div class="result-source-label">${escapeHtml(r.sourceLabel || 'Manual')}</div>
+      <div class="result-submeta">${escapeHtml(r.statusHint || r.sourceTitle || '—')}</div>
+    `;
 
     const resultCell = document.createElement('td');
     const badge = document.createElement('span');
@@ -412,8 +449,11 @@ function renderResults() {
     resultCell.appendChild(badge);
 
     const detailCell = document.createElement('td');
-    detailCell.style.color = 'var(--label-3)';
-    detailCell.textContent = r.detail || '—';
+    detailCell.className = 'result-detail';
+    detailCell.innerHTML = `
+      <div>${escapeHtml(r.detail || '—')}</div>
+      ${r.statusNote ? `<div class="result-submeta">${escapeHtml(r.statusNote)}</div>` : ''}
+    `;
 
     const timeCell = document.createElement('td');
     timeCell.style.color = 'var(--label-3)';
@@ -430,7 +470,7 @@ function renderResults() {
     deleteBtn.addEventListener('click', () => deleteResult(r.code));
     deleteCell.appendChild(deleteBtn);
 
-    row.append(codeCell, resultCell, detailCell, timeCell, deleteCell);
+    row.append(codeCell, sourceCell, resultCell, detailCell, timeCell, deleteCell);
     tbody.appendChild(row);
   });
 }
@@ -518,11 +558,11 @@ function handleSSE(data) {
       loadAll();
       if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       if (data.error) {
-        showToast(`Reddit check failed: ${data.error}`, 'error');
+        showToast(`Source scan failed: ${data.error}`, 'error');
         setLastRun('reddit', `Error`, true);
       } else {
         const total = data.newCodes || 0;
-        showToast(`Reddit check done — ${total} new code${total !== 1 ? 's' : ''} found`);
+        showToast(`Source scan done — ${total} new code${total !== 1 ? 's' : ''} found`);
         setLastRun('reddit', total > 0 ? `✅ ${total} new code${total !== 1 ? 's' : ''}` : '✅ Done, 0 new');
       }
       setRunning('reddit', false);
@@ -625,7 +665,7 @@ function finishLiveCard(type, applied, successes, rateLimited) {
 
   let summary;
   if (type === 'reddit') {
-    summary = `<span style="color:var(--green);font-size:13px;font-weight:600">✅ Reddit check complete</span>`;
+    summary = `<span style="color:var(--green);font-size:13px;font-weight:600">✅ Source scan complete</span>`;
   } else if (rateLimited) {
     summary = `<span style="color:var(--orange);font-size:13px;font-weight:600">⏳ Rate limited — remaining codes saved for next run</span>`;
   } else if (successes > 0) {
@@ -730,11 +770,12 @@ function appendRedditProgress(data) {
     new_thread: `🆕 ${data.source}: new thread ${data.threadId}`,
     fetching: `💬 ${data.source}: fetching comments (${data.threadId})...`,
     fallback: `↩ ${data.source}: new thread empty, checking previous (${data.threadId})...`,
-    done: `✅ ${data.source}: ${data.commentsScanned} comments · ${data.newCodes} new codes`,
+    source_item: `• ${data.source}: ${data.message}`,
+    done: `✅ ${data.source}: ${data.commentsScanned ? `${data.commentsScanned} comments · ` : ''}${data.newCodes} candidate${data.newCodes === 1 ? '' : 's'}${data.queued !== undefined ? ` · ${data.queued} queued` : ''}`,
     error: `❌ ${data.source}: ${data.message}`,
   };
   const msg = msgs[data.step] || `${data.source}: ${data.step}`;
-  const cls = data.step === 'done' ? 'success' : data.step === 'error' ? 'error' : '';
+  const cls = data.step === 'done' ? 'success' : data.step === 'error' ? 'error' : data.step === 'source_item' ? 'waiting' : '';
   const div = document.createElement('div');
   div.className = `live-log-line ${cls}`;
   div.textContent = msg;
@@ -745,11 +786,11 @@ function appendRedditProgress(data) {
 async function triggerReddit() {
   setRunning('reddit', true);
   resetLiveCard();
-  appendLiveLog({ status: 'trying', code: 'Starting Reddit check...' });
+  appendLiveLog({ status: 'trying', code: 'Starting source scan...' });
   try {
     await fetch('/api/run/reddit', { method: 'POST' });
   } catch {
-    showToast('Failed to start Reddit check', 'error');
+    showToast('Failed to start source scan', 'error');
     setRunning('reddit', false);
   }
 }
@@ -873,6 +914,7 @@ function formatMonth(m) {
 
 function formatLogDetail(entry) {
   const parts = [];
+  if (entry.source) parts.push(`source: ${entry.source}`);
   if (entry.thread_id) parts.push(`thread: ${entry.thread_id}`);
   if (entry.comments_scanned) parts.push(`${entry.comments_scanned} comments`);
   if (entry.new_codes !== undefined) parts.push(`${entry.new_codes} new codes`);
@@ -884,4 +926,49 @@ function formatLogDetail(entry) {
   if (entry.detail) parts.push(entry.detail);
   if (entry.old_thread) parts.push(`${entry.old_thread} → ${entry.new_thread}`);
   return parts.join(' · ') || '—';
+}
+
+function renderMonitoredSources(sources) {
+  const el = document.getElementById('sources-list');
+  const badge = document.getElementById('sources-count');
+  if (!el || !badge) return;
+
+  const activeCount = sources.filter(source => source.status && source.status !== 'idle').length;
+  badge.textContent = `${activeCount} active`;
+
+  if (!sources.length) {
+    el.innerHTML = '<div class="empty-state">Source status will appear after the first scan</div>';
+    return;
+  }
+
+  el.innerHTML = sources.map(source => `
+    <div class="source-row">
+      <div class="source-main">
+        <div class="source-title-row">
+          <div class="source-name">${escapeHtml(source.label || source.key)}</div>
+          <span class="source-status-chip ${sourceStatusClass(source.status)}">${escapeHtml(sourceStatusLabel(source.status))}</span>
+        </div>
+        <div class="source-meta-row">
+          ${source.note ? `<span class="meta-pill">${escapeHtml(source.note)}</span>` : ''}
+          ${source.usableCodes !== undefined ? `<span class="meta-pill">${escapeHtml(String(source.usableCodes))} candidates</span>` : ''}
+          ${source.queued !== undefined ? `<span class="meta-pill">${escapeHtml(String(source.queued))} queued</span>` : ''}
+          ${source.lastCheckedAt ? `<span class="meta-pill">Checked ${escapeHtml(timeAgo(new Date(source.lastCheckedAt)))}</span>` : ''}
+        </div>
+      </div>
+      ${source.sourceUrl ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(source.sourceUrl)}" target="_blank" rel="noreferrer">Open ↗</a>` : ''}
+    </div>
+  `).join('');
+}
+
+function sourceStatusClass(status) {
+  return `status-${cssToken(status || 'idle')}`;
+}
+
+function sourceStatusLabel(status) {
+  return {
+    ok: 'Healthy',
+    checking: 'Checking',
+    error: 'Error',
+    idle: 'Idle',
+  }[status] || 'Idle';
 }

@@ -22,12 +22,74 @@ function normalizeCode(code) {
   return /^[A-Z0-9_-]{4,32}$/.test(normalized) ? normalized : null;
 }
 
-function addToQueue(codes) {
+function getCodeCatalog() {
+  if (!fs.existsSync(cfg.CODE_CATALOG_FILE)) return { codes: {}, sources: {} };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cfg.CODE_CATALOG_FILE, 'utf8'));
+    return {
+      codes: parsed.codes || {},
+      sources: parsed.sources || {},
+    };
+  } catch {
+    return { codes: {}, sources: {} };
+  }
+}
+
+function saveCodeCatalog(catalog) {
+  fs.writeFileSync(cfg.CODE_CATALOG_FILE, JSON.stringify(catalog, null, 2));
+}
+
+function mergeCodeMeta(code, meta = {}) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+  const catalog = getCodeCatalog();
+  const current = catalog.codes[normalized] || {};
+  catalog.codes[normalized] = {
+    ...current,
+    ...meta,
+    code: normalized,
+    updatedAt: new Date().toISOString(),
+  };
+  saveCodeCatalog(catalog);
+  return true;
+}
+
+function setSourceStatus(sourceKey, status = {}) {
+  const catalog = getCodeCatalog();
+  catalog.sources[sourceKey] = {
+    ...(catalog.sources[sourceKey] || {}),
+    ...status,
+    updatedAt: new Date().toISOString(),
+  };
+  saveCodeCatalog(catalog);
+}
+
+function addToQueue(entries) {
   const existing = new Set(getQueue());
   const processed = new Set(getProcessed().map(r => r.code));
-  const cleanCodes = [...new Set(codes.map(normalizeCode).filter(Boolean))];
-  const newCodes = cleanCodes.filter(c => !existing.has(c) && !processed.has(c));
+  const catalog = getCodeCatalog();
+  const normalizedEntries = entries
+    .map(entry => typeof entry === 'string' ? { code: entry } : entry)
+    .map(entry => {
+      const code = normalizeCode(entry.code);
+      return code ? { ...entry, code } : null;
+    })
+    .filter(Boolean);
+  const deduped = new Map();
+  for (const entry of normalizedEntries) deduped.set(entry.code, entry);
+  const uniqueEntries = [...deduped.values()];
+  const newEntries = uniqueEntries.filter(entry => !existing.has(entry.code) && !processed.has(entry.code));
+  const newCodes = newEntries.map(entry => entry.code);
   if (!newCodes.length) return 0;
+  for (const entry of uniqueEntries) {
+    catalog.codes[entry.code] = {
+      ...(catalog.codes[entry.code] || {}),
+      ...entry,
+      code: entry.code,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  saveCodeCatalog(catalog);
   fs.appendFileSync(cfg.QUEUE_FILE, newCodes.join('\n') + '\n');
   return newCodes.length;
 }
@@ -58,6 +120,22 @@ function getProcessed() {
       return { code: line.slice(0, idx), result: line.slice(idx + 1), detail: null, ts: null };
     })
     .filter(Boolean);
+}
+
+function getQueueDetails() {
+  const catalog = getCodeCatalog();
+  return getQueue().map(code => ({
+    code,
+    ...(catalog.codes[code] || {}),
+  }));
+}
+
+function getProcessedDetails() {
+  const catalog = getCodeCatalog();
+  return getProcessed().map(item => ({
+    ...item,
+    ...(catalog.codes[item.code] || {}),
+  }));
 }
 
 function deleteResult(code) {
@@ -215,8 +293,9 @@ function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 function getStats() {
-  const processed = getProcessed();
-  const queue = getQueue();
+  const processed = getProcessedDetails();
+  const queue = getQueueDetails();
+  const catalog = getCodeCatalog();
 
   const successes = processed.filter(r => r.result === 'success');
   const rejected = processed.filter(r => r.result === 'rejected');
@@ -236,14 +315,20 @@ function getStats() {
     successCodes: successes.map(r => r.code),
     recentResults: processed.slice(-20).reverse(),
     queue: queue.slice(0, 30),
+    monitoredSources: Object.entries(catalog.sources)
+      .map(([key, value]) => ({ key, ...value }))
+      .sort((a, b) => (a.label || a.key).localeCompare(b.label || b.key)),
   };
 }
 
 module.exports = {
   ensureDirs,
   normalizeCode,
+  getCodeCatalog, saveCodeCatalog, mergeCodeMeta, setSourceStatus,
   getQueue, addToQueue, removeFromQueue,
+  getQueueDetails,
   getProcessed, markResult, deleteResult,
+  getProcessedDetails,
   getTriedState, saveTriedState,
   getThreadId, getThreadMonth, saveThreadId,
   monthlyReset,

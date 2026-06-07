@@ -37,7 +37,7 @@
 
       <div class="sidebar-actions">
         <button class="btn btn-primary" id="btn-reddit" onclick="triggerReddit()">
-          <span>🔍</span> Check Reddit
+          <span>🔍</span> Check Sources
         </button>
         <div class="last-run-label" id="last-reddit-run"></div>
         <button class="btn btn-secondary" id="btn-apply" onclick="triggerApply()">
@@ -127,6 +127,16 @@
           </div>
         </div>
 
+        <div class="card">
+          <div class="card-header">
+            <h3>Monitored Sources</h3>
+            <span class="card-badge" id="sources-count">0 active</span>
+          </div>
+          <div class="sources-list" id="sources-list">
+            <div class="empty-state">Source status will appear after the first scan</div>
+          </div>
+        </div>
+
         <div class="card" id="live-status-card" style="display:none">
           <div class="card-header">
             <h3>Live Progress</h3>
@@ -152,7 +162,7 @@
             <span class="card-badge" id="pending-count">0 codes</span>
           </div>
           <div class="queue-list" id="queue-list">
-            <div class="empty-state">Queue is empty — run a Reddit check to find codes</div>
+            <div class="empty-state">Queue is empty — run a source scan to find codes</div>
           </div>
         </div>
       </section>
@@ -174,6 +184,7 @@
             <thead>
               <tr>
                 <th>Code</th>
+                <th>Source</th>
                 <th>Result</th>
                 <th>Details</th>
                 <th>When</th>
@@ -181,7 +192,7 @@
               </tr>
             </thead>
             <tbody id="results-tbody">
-              <tr><td colspan="4" class="empty-state">No results yet</td></tr>
+              <tr><td colspan="6" class="empty-state">No results yet</td></tr>
             </tbody>
           </table>
         </div>
@@ -263,8 +274,8 @@
 
           <div class="settings-row">
             <div class="settings-info">
-              <div class="settings-label">Reddit Scan Interval</div>
-              <div class="settings-desc">How often to check Reddit for new promo codes</div>
+              <div class="settings-label">Source Scan Interval</div>
+              <div class="settings-desc">How often to scan Reddit, Slickdeals, and SimplyCodes for new promo codes</div>
             </div>
             <div class="settings-control">
               <select class="settings-select" id="scan-interval" onchange="saveScanInterval()">
@@ -313,7 +324,7 @@
           <div class="how-it-works">
             <div class="how-step">
               <span class="how-num">1</span>
-              <div><strong>Reddit Scan</strong> — Checks r/postmates for the monthly promo code thread using RSS. Extracts codes from comments and adds new ones to the queue.</div>
+              <div><strong>Source Scan</strong> — Checks the monthly Reddit threads plus selected public-code sources, then scores each candidate based on freshness, community signals, and whether it looks reusable for existing users.</div>
             </div>
             <div class="how-step">
               <span class="how-num">2</span>
@@ -321,7 +332,11 @@
             </div>
             <div class="how-step">
               <span class="how-num">3</span>
-              <div><strong>Monthly Reset</strong> — When a new thread is detected (each month), the queue and results automatically archive and reset for the new month.</div>
+              <div><strong>Status Tracking</strong> — The dashboard keeps source health, confidence, recent verification hints, queue state, and apply results in one place so it is easier to see what is worth trying next.</div>
+            </div>
+            <div class="how-step">
+              <span class="how-num">4</span>
+              <div><strong>Monthly Reset</strong> — When a new monthly Reddit thread is detected, the queue and results archive/reset for the new month while the source catalog keeps monitoring metadata around.</div>
             </div>
           </div>
         </div>
