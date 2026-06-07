@@ -19,6 +19,7 @@ module.exports = {
   THREAD_MONTH_FILE: path.join(DATA_DIR, 'last_thread_month.txt'),
   TRIED_FILE: path.join(DATA_DIR, 'tried_codes.json'),
   LOG_FILE: path.join(DATA_DIR, 'run_log.jsonl'),
+  SESSION_STATE_FILE: path.join(DATA_DIR, 'session_state.json'),
 
   // State files — Uber Eats (r/UberEATS) — shares queue + processed with Postmates
   UE_THREAD_FILE: path.join(DATA_DIR, 'ue_thread_config.txt'),

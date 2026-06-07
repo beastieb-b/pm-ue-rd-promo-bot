@@ -102,11 +102,11 @@ function isLoggedIn() {
   const cookiePath = path.join(cfg.BROWSER_PROFILE_DIR, 'Default', 'Cookies');
   if (!fs.existsSync(cookiePath)) return false;
 
-  // Check for the Postmates auth cookie (jwt-session) specifically.
-  // An unauthenticated Chrome visit sets analytics cookies but not the JWT.
+  // Check for the Postmates session cookie ('sid') and Uber auth cookie ('csid').
+  // An unauthenticated visit only sets analytics cookies, not these auth cookies.
   try {
     const result = execSync(
-      `sqlite3 "${cookiePath}" "SELECT COUNT(*) FROM cookies WHERE host_key LIKE '%postmates%' AND name='jwt-session';"`,
+      `sqlite3 "${cookiePath}" "SELECT COUNT(*) FROM cookies WHERE (host_key LIKE '%postmates%' AND name='sid') OR (host_key LIKE '%uber%' AND name='csid');"`,
       { timeout: 3000, stdio: ['pipe', 'pipe', 'ignore'] }
     ).toString().trim();
     return parseInt(result) > 0;

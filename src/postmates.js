@@ -11,9 +11,19 @@ let _applyRunning = false;
 
 // Tracks actual login state based on real navigation results (not cookies)
 // null = unknown, true = confirmed working, false = confirmed not logged in
-let _sessionValid = null;
+// Load persisted session state so "Logged in" status survives daemon restarts.
+let _sessionValid = (() => {
+  try {
+    const data = JSON.parse(fs.readFileSync(cfg.SESSION_STATE_FILE, 'utf8'));
+    return data.sessionValid ?? null;
+  } catch { return null; }
+})();
+
 function getSessionValid() { return _sessionValid; }
-function setSessionValid(v) { _sessionValid = v; }
+function setSessionValid(v) {
+  _sessionValid = v;
+  try { fs.writeFileSync(cfg.SESSION_STATE_FILE, JSON.stringify({ sessionValid: v })); } catch {}
+}
 
 async function getBrowserContext(headless = true) {
   if (_context) {
@@ -67,7 +77,7 @@ async function setupLogin() {
     // Wait until user closes the browser
     await new Promise(resolve => ctx.on('close', resolve));
     _context = null;
-    _sessionValid = null; // reset — will be confirmed on next apply run
+    setSessionValid(null); // reset — will be confirmed on next apply run
     console.log('\n✅ Browser closed — login session saved.\n');
   } finally {
     _setupRunning = false;
@@ -202,10 +212,10 @@ async function applyCode(page, code) {
   const url = page.url();
   const onPostmates = url.includes('postmates.com') && !url.includes('/login') && !url.includes('/signin');
   if (!onPostmates) {
-    _sessionValid = false;
+    setSessionValid(false);
     return { result: 'not_logged_in', detail: 'Redirected — use Settings → Log in to Postmates' };
   }
-  _sessionValid = true;
+  setSessionValid(true);
 
   // Wait up to 8s for the promo modal to appear — the URL params trigger it
   // lazily in React, so it often renders after the initial page load.
