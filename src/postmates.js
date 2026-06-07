@@ -42,6 +42,7 @@ async function getBrowserContext(headless = true) {
   _context = await chromium.launchPersistentContext(cfg.BROWSER_PROFILE_DIR, {
     channel: 'chrome',
     headless,
+    chromiumSandbox: true,   // prevents Playwright from injecting --no-sandbox
     args: [
       '--no-first-run',
       '--disable-default-apps',
