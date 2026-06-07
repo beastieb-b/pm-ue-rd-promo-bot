@@ -13,14 +13,16 @@ const hasCheerio = (() => {
 
 const parserTest = hasCheerio ? test : test.skip;
 
-parserTest('parses Slickdeals Postmates thread metadata and comment signals', () => {
+parserTest('parses Slickdeals thread: code from meta description, community signals', () => {
   const html = `
     <html>
-      <head><title>Postmates $20 off $30</title></head>
+      <head>
+        <meta name="description" content="Postmates $20 off $30+ for Los Angeles. Expires 05-25-2027 Use promo code: BEACHRUN">
+        <title>Postmates $20 off $30</title>
+      </head>
       <body>
         <h1>Postmates $20 off $30+ for Los Angeles</h1>
-        <div>Use promo code: BEACHRUN</div>
-        <div>Expires 05-25-2026</div>
+        <div>Expires 05-25-2027</div>
         <div class="comment">Worked for me in Los Angeles</div>
         <div class="comment">Still working tonight</div>
       </body>
@@ -28,20 +30,38 @@ parserTest('parses Slickdeals Postmates thread metadata and comment signals', ()
   `;
 
   const parsed = parseSlickdealsThread(html, 'https://slickdeals.net/f/example');
-  assert.ok(parsed);
+  assert.ok(parsed, 'should return an entry for a live deal');
   assert.strictEqual(parsed.code, 'BEACHRUN');
   assert.strictEqual(parsed.sourceKey, 'slickdeals_postmates');
   assert.strictEqual(parsed.region, 'Los Angeles');
-  assert.strictEqual(parsed.expiresAt, '2026-05-25');
+  assert.strictEqual(parsed.expiresAt, '2027-05-25');
   assert.strictEqual(parsed.statusHint, 'Community verified');
+});
+
+parserTest('skips expired Slickdeals threads', () => {
+  const html = `
+    <html>
+      <head>
+        <meta name="description" content="Postmates deal. Use promo code: OLDCODE">
+      </head>
+      <body>
+        <div class="expiredDealAlertBar">Heads up, this deal has expired.</div>
+        <div class="slickdealsBadge dealCardBadge dealCardBadge--expired">expired</div>
+      </body>
+    </html>
+  `;
+
+  assert.strictEqual(parseSlickdealsThread(html, 'https://slickdeals.net/f/example'), null);
 });
 
 parserTest('filters new-customer Slickdeals offers', () => {
   const html = `
     <html>
+      <head>
+        <meta name="description" content="Postmates new customer offer. Use promo code: FRESH20">
+      </head>
       <body>
         <h1>Postmates new customer offer</h1>
-        <div>Use promo code: FRESH20</div>
         <div>For new customers on first order only</div>
       </body>
     </html>

@@ -285,25 +285,30 @@ function parseExpiry(text) {
 function parseSlickdealsThread(body, url) {
   const cheerio = getCheerio();
   const $ = cheerio.load(body);
+
+  // Skip expired deals — Slickdeals marks them with a visible alert bar + badge
+  if ($('.expiredDealAlertBar, [class*="dealCardBadge--expired"]').length) return null;
+
+  // Extract code from the meta description attribute — avoids text-node concatenation
+  // bugs (e.g. "BEACHRUNCommunity") that happen when using $('body').text()
+  const metaDesc = $('meta[name="description"]').attr('content') || '';
+  const codeMatch = metaDesc.match(/Use promo code:\s*([A-Z0-9_-]{4,32})\b/i)
+    || metaDesc.match(/promo code[:\s]+([A-Z0-9_-]{4,32})\b/i);
+  const code = state.normalizeCode(codeMatch?.[1] || '');
+
   const pageText = normalizeText($('body').text());
   const title = normalizeText($('h1').first().text()) || normalizeText($('title').text());
-  const codeMatch = pageText.match(/Use promo code:\s*([A-Z0-9_-]{4,32})/i);
-  const code = state.normalizeCode(codeMatch?.[1] || '');
   const existingUser = !/\b(new customer|new users?|first order|initial purchase)\b/i.test(pageText);
   const regionMatch = pageText.match(/\b(Los Angeles|California|NYC|New York|Chicago|Seattle|Dallas|Houston|Miami)\b/i);
   const region = regionMatch ? regionMatch[1] : null;
   const expiresAt = parseExpiry(pageText);
+
+  // Collect Slickdeals user comments for worked/dead signals
   const comments = [];
-  $('[id*="comment"], .comment').each((_, el) => {
+  $('[class*="comment"], [class*="Comment"]').each((_, el) => {
     const text = normalizeText($(el).text());
-    if (text) comments.push(text);
+    if (text.length > 10) comments.push(text);
   });
-  if (!comments.length) {
-    $('body').find('p, div').each((_, el) => {
-      const text = normalizeText($(el).text());
-      if (text.length > 3) comments.push(text);
-    });
-  }
 
   let worked = 0;
   let dead = 0;
