@@ -187,11 +187,13 @@ async function main() {
 
   console.log('\n✅ Daemon running. Dashboard: http://localhost:' + cfg.DASHBOARD_PORT + '\n');
 
-  process.on('SIGINT', async () => {
-    console.log('\nShutting down...');
+  const shutdown = async (signal) => {
+    console.log(`\nShutting down (${signal})...`);
     await postmates.closeBrowser();
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM')); // launchd unload sends SIGTERM
 }
 
 main().catch(err => {

@@ -87,10 +87,20 @@ function extractRejectionReason(bodyText) {
   return null;
 }
 
+async function getResultText(page) {
+  // Read the modal's text only — avoids false matches from nav, footer,
+  // or unrelated toasts that contain words like "error" or "expired".
+  // Falls back to full body if no modal is present.
+  return page.evaluate(() => {
+    const modal = document.querySelector('[role="dialog"], [aria-modal="true"]');
+    return (modal || document.body).innerText.toLowerCase();
+  });
+}
+
 async function detectResult(page) {
   await page.waitForTimeout(3000);
 
-  const bodyText = await page.evaluate(() => document.body.innerText.toLowerCase());
+  const bodyText = await getResultText(page);
 
   // Rate limit signals
   if (
@@ -130,7 +140,7 @@ async function detectResult(page) {
 
   // If no signal yet, wait and check again — run the full success check, not a subset
   await page.waitForTimeout(3000);
-  const bodyText2 = await page.evaluate(() => document.body.innerText.toLowerCase());
+  const bodyText2 = await getResultText(page);
   const reason2 = extractRejectionReason(bodyText2);
   if (reason2) return { result: 'rejected', detail: reason2 };
   const successSignal2 =
@@ -199,7 +209,9 @@ async function applyCode(page, code) {
 
   // Wait up to 8s for the promo modal to appear — the URL params trigger it
   // lazily in React, so it often renders after the initial page load.
-  const modalLocator = page.locator('[role="dialog"], [aria-modal="true"]').first();
+  // Scope to dialogs that contain an input so we never grab a cookie banner or
+  // address confirmation modal that happens to appear at the same time.
+  const modalLocator = page.locator('[role="dialog"]:has(input), [aria-modal="true"]:has(input)').first();
   try {
     await modalLocator.waitFor({ state: 'visible', timeout: 8000 });
   } catch {
@@ -282,11 +294,12 @@ async function applyCode(page, code) {
   // waitForSelector with :has-text() is unreliable in Playwright 1.40+ — use locators instead
   let clicked = false;
 
-  // Try text-based locators first (most precise)
-  const textCandidates = ['APPLY', 'Apply', 'Redeem', 'Submit'];
+  // Try text-based locators — use exact:false so "Apply Code" / "Apply Promo"
+  // variants also match, but filter by a short name to avoid matching unrelated buttons.
+  const textCandidates = ['Apply', 'Redeem', 'Submit'];
   for (const text of textCandidates) {
     try {
-      const loc = page.getByRole('button', { name: text, exact: true });
+      const loc = page.getByRole('button', { name: text, exact: false });
       if (await loc.isVisible({ timeout: 2000 })) {
         await loc.click();
         clicked = true;
@@ -366,8 +379,12 @@ async function runApplyCodes(options = {}) {
       }
 
       if (['not_logged_in', 'error', 'unknown'].includes(applyResult.result)) {
-        // Transient or ambiguous failure — code stays in queue and retries automatically next run
+        // Transient or ambiguous failure — code stays in queue and retries automatically next run.
+        // Add a short cooldown so consecutive failures don't hammer the site back-to-back.
         state.appendLog({ type: 'code_deferred', code, reason: applyResult.result, note: 'will retry next run' });
+        if (applyResult.result !== 'not_logged_in' && code !== pending[pending.length - 1]) {
+          await page.waitForTimeout(20_000); // 20s cooldown between transient failures
+        }
         continue;
       }
 

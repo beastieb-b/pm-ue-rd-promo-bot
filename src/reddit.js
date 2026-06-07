@@ -43,14 +43,19 @@ async function detectCurrentThread() {
     const entry = m[1];
     const idMatch = entry.match(/<id>t3_([a-z0-9]+)<\/id>/);
     const titleMatch = entry.match(/<title>(.*?)<\/title>/);
+    // Use <published> (thread creation time) not <updated> (last-comment time).
+    // A still-active old thread has a recent <updated> but an old <published>,
+    // so sorting by <published> reliably picks the newest thread each month.
+    const publishedMatch = entry.match(/<published>(.*?)<\/published>/);
     const updatedMatch = entry.match(/<updated>(.*?)<\/updated>/);
     if (idMatch && titleMatch) {
       const title = titleMatch[1].toLowerCase();
       if (title.includes('monthly') && title.includes('promo')) {
+        const published = publishedMatch || updatedMatch; // fall back to updated if no published
         entries.push({
           id: idMatch[1],
           title: titleMatch[1],
-          updated: updatedMatch ? new Date(updatedMatch[1]).getTime() : 0,
+          published: published ? new Date(published[1]).getTime() : 0,
         });
       }
     }
@@ -58,8 +63,8 @@ async function detectCurrentThread() {
 
   if (!entries.length) throw new Error('No matching thread found in RSS');
 
-  // Sort by newest first, return top 2 (fallback if newest is empty)
-  entries.sort((a, b) => b.updated - a.updated);
+  // Sort by thread creation date (newest first), return top 2 as fallback
+  entries.sort((a, b) => b.published - a.published);
   return entries.slice(0, 2);
 }
 
@@ -78,21 +83,23 @@ async function detectUberEatsThread() {
     const entry = m[1];
     const idMatch = entry.match(/<id>t3_([a-z0-9]+)<\/id>/);
     const titleMatch = entry.match(/<title>(.*?)<\/title>/);
+    const publishedMatch = entry.match(/<published>(.*?)<\/published>/);
     const updatedMatch = entry.match(/<updated>(.*?)<\/updated>/);
     if (idMatch && titleMatch) {
       const title = titleMatch[1].toLowerCase();
       if (title.includes('monthly') && (title.includes('promo') || title.includes('code'))) {
+        const published = publishedMatch || updatedMatch;
         entries.push({
           id: idMatch[1],
           title: titleMatch[1],
-          updated: updatedMatch ? new Date(updatedMatch[1]).getTime() : 0,
+          published: published ? new Date(published[1]).getTime() : 0,
         });
       }
     }
   }
 
   if (!entries.length) throw new Error('No UberEATS thread found in RSS');
-  entries.sort((a, b) => b.updated - a.updated);
+  entries.sort((a, b) => b.published - a.published);
   return entries.slice(0, 2);
 }
 

@@ -74,6 +74,11 @@ const FILTER_WORDS = new Set([
   'CALIFORNIA', 'GEORGIA', 'NEVADA', 'OREGON', 'WASHINGTON', 'COLORADO',
   'MIDWEST', 'NORTHEAST', 'SOUTHEAST', 'SOUTHWEST', 'SOCAL', 'NORCAL',
 
+  // Common Title-case words reachable via Pattern 5 (standalone at line start)
+  'TODAY', 'ENJOY', 'HAPPY', 'LUCKY', 'MAYBE', 'GREAT', 'OFFER', 'DEALS',
+  'READY', 'SWEET', 'QUICK', 'CLEAN', 'FRESH', 'EXTRA', 'BONUS', 'HELLO',
+  'BASICALLY', 'HONESTLY', 'ORDERING',
+
   // Common words that appear in comments but aren't codes
   'ANOTHER', 'MIGHT', 'SEEMS', 'MATES', 'CLAIMED', 'ASAP', 'PLUS',
   'BECAUSE', 'DOING', 'GOING', 'GETTING', 'LOOKING', 'TRYING', 'SEEING',
