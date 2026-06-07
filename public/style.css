@@ -606,6 +606,17 @@ body {
 .live-log-line {
   padding: 2px 0;
   color: var(--label-3);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.live-log-ts {
+  flex-shrink: 0;
+  font-size: 10px;
+  opacity: 0.45;
+  letter-spacing: 0.02em;
+  color: inherit;
 }
 
 .live-log-line.success { color: var(--green); }

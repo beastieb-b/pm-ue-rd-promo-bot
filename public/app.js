@@ -706,7 +706,12 @@ function appendLiveLog(data) {
 
   const div = document.createElement('div');
   div.className = `live-log-line ${cls}`;
-  div.textContent = msg;
+  const ts = document.createElement('span');
+  ts.className = 'live-log-ts';
+  ts.textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const text = document.createElement('span');
+  text.textContent = msg;
+  div.append(ts, text);
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }
@@ -778,7 +783,12 @@ function appendRedditProgress(data) {
   const cls = data.step === 'done' ? 'success' : data.step === 'error' ? 'error' : data.step === 'source_item' ? 'waiting' : '';
   const div = document.createElement('div');
   div.className = `live-log-line ${cls}`;
-  div.textContent = msg;
+  const ts = document.createElement('span');
+  ts.className = 'live-log-ts';
+  ts.textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const text = document.createElement('span');
+  text.textContent = msg;
+  div.append(ts, text);
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }
