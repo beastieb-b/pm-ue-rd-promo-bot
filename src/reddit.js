@@ -379,10 +379,10 @@ async function scanSlickdeals(onProgress) {
 
     const added = state.addToQueue(candidates);
     setSourceStatus(sourceKey, {
-      status: candidates.length ? 'ok' : 'idle',
+      status: 'ok',  // scan completed successfully regardless of whether codes were found
       note: candidates.length
-        ? `Found ${candidates.length} public code candidate${candidates.length === 1 ? '' : 's'}`
-        : links.size > 0 ? 'Deals found but none had extractable promo codes' : 'No active Postmates deals on Slickdeals right now',
+        ? `Found ${candidates.length} code candidate${candidates.length === 1 ? '' : 's'}`
+        : links.size > 0 ? `${links.size} deal${links.size === 1 ? '' : 's'} checked — all expired or new-user only` : 'No active Postmates deals posted yet',
       usableCodes: candidates.length,
       queued: added,
       sourceUrl: searchUrl,
