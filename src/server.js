@@ -5,7 +5,38 @@ const state = require('./state');
 const settings = require('./settings');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '8kb' }));
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+function hostName(value) {
+  if (!value) return '';
+  const host = value.split(',')[0].trim().toLowerCase();
+  if (host.startsWith('[')) return host.slice(1, host.indexOf(']'));
+  return host.split(':')[0];
+}
+
+function isLocalHost(value) {
+  return LOCAL_HOSTS.has(hostName(value));
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return LOCAL_HOSTS.has(url.hostname) && (!url.port || Number(url.port) === cfg.DASHBOARD_PORT);
+  } catch {
+    return false;
+  }
+}
+
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (!isLocalHost(req.headers.host) || !isAllowedOrigin(req.headers.origin)) {
+    return res.status(403).json({ error: 'Local dashboard requests only' });
+  }
+  next();
+});
 app.use(express.static(path.join(cfg.APP_DIR, 'public')));
 
 // SSE clients for real-time updates
@@ -34,7 +65,8 @@ app.get('/api/events', (req, res) => {
 app.get('/api/stats', (req, res) => {
   const postmates = require('./postmates');
   const sessionValid = postmates.getSessionValid(); // null=unknown, true=ok, false=invalid
-  const cookieExists = settings.isLoggedIn();       // cookie present in profile
+  const setup = settings.getSetupStatus();
+  const cookieExists = setup.steps.find(s => s.id === 'login')?.done; // cookie present in profile
 
   // Determine login status:
   // - If we've actually navigated and it failed → definitely not logged in
@@ -49,7 +81,7 @@ app.get('/api/stats', (req, res) => {
     ...state.getStats(),
     loggedIn,
     settings: settings.load(),
-    setup: settings.getSetupStatus(),
+    setup,
     scanStatus: _getScanStatusFn ? _getScanStatusFn() : null,
   });
 });
@@ -77,11 +109,11 @@ app.post('/api/settings', (req, res) => {
 
   if (scanIntervalHours !== undefined) {
     const h = parseFloat(scanIntervalHours);
-    if (!isNaN(h) && h >= 0.5 && h <= 24) updates.scanIntervalHours = h;
+    if (settings.SCAN_INTERVALS.includes(h)) updates.scanIntervalHours = h;
   }
   if (applyIntervalHours !== undefined) {
     const h = parseFloat(applyIntervalHours);
-    if (!isNaN(h) && h >= 1 && h <= 24) updates.applyIntervalHours = h;
+    if (settings.APPLY_INTERVALS.includes(h)) updates.applyIntervalHours = h;
   }
 
   if (!Object.keys(updates).length) {
@@ -148,6 +180,7 @@ app.post('/api/setup', async (req, res) => {
   res.json({ started: true });
   try {
     await postmates.setupLogin();
+    settings.invalidateSetupStatus();
     broadcast({ type: 'setup_done', loggedIn: settings.isLoggedIn() });
   } catch (err) {
     broadcast({ type: 'error', message: `Setup failed: ${err.message}` });
@@ -158,8 +191,7 @@ app.post('/api/run/reddit', async (req, res) => {
   if (!_runRedditFn) return res.status(503).json({ error: 'Not initialized' });
   res.json({ started: true });
   try {
-    const result = await _runRedditFn();
-    broadcast({ type: 'reddit_done', ...result });
+    await _runRedditFn();
   } catch (err) {
     broadcast({ type: 'error', message: err.message });
   }
@@ -169,10 +201,9 @@ app.post('/api/run/apply', async (req, res) => {
   if (!_runApplyFn) return res.status(503).json({ error: 'Not initialized' });
   res.json({ started: true });
   try {
-    const result = await _runApplyFn({
+    await _runApplyFn({
       onProgress: (update) => broadcast({ type: 'apply_progress', ...update }),
     });
-    broadcast({ type: 'apply_done', ...result });
   } catch (err) {
     broadcast({ type: 'error', message: err.message });
   }
@@ -181,7 +212,8 @@ app.post('/api/run/apply', async (req, res) => {
 app.post('/api/queue/add', (req, res) => {
   const { code } = req.body;
   if (!code || typeof code !== 'string') return res.status(400).json({ error: 'code required' });
-  const upper = code.trim().toUpperCase();
+  const upper = state.normalizeCode(code);
+  if (!upper) return res.status(400).json({ error: 'code must be 4-32 letters, numbers, underscores, or hyphens' });
   const added = state.addToQueue([upper]);
   broadcast({ type: 'queue_updated' });
   res.json({ added, code: upper });
@@ -202,8 +234,8 @@ app.delete('/api/queue/:code', (req, res) => {
 function start() {
   return new Promise((resolve, reject) => {
     const tryListen = (attemptsLeft) => {
-      const srv = app.listen(cfg.DASHBOARD_PORT, () => {
-        console.log(`📊 Dashboard: http://localhost:${cfg.DASHBOARD_PORT}`);
+      const srv = app.listen(cfg.DASHBOARD_PORT, cfg.DASHBOARD_HOST, () => {
+        console.log(`📊 Dashboard: http://${cfg.DASHBOARD_HOST}:${cfg.DASHBOARD_PORT}`);
         resolve();
       });
       srv.on('error', (err) => {

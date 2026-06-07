@@ -8,6 +8,7 @@
     "setup": "node src/index.js --setup",
     "reddit": "node src/index.js --reddit",
     "apply": "node src/index.js --apply",
+    "test": "node --test",
     "migrate": "node src/migrate.js",
     "install-service": "node src/install-service.js",
     "uninstall-service": "node src/install-service.js --uninstall",
@@ -18,5 +19,8 @@
     "express": "^4.18.0",
     "node-cron": "^3.0.0",
     "playwright": "^1.40.0"
+  },
+  "engines": {
+    "node": ">=20.18.1"
   }
 }

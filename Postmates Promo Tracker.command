@@ -14,9 +14,13 @@ PORT=8766
 
 # ── Check if already running ─────────────────────────────────────────────────
 if lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Postmates Promo Tracker is already running."
-  open "http://localhost:$PORT"
-  exit 0
+  if curl -fsS "http://127.0.0.1:$PORT/api/stats" 2>/dev/null | grep -q '"queueCount"'; then
+    echo "Postmates Promo Tracker is already running."
+    open "http://127.0.0.1:$PORT"
+    exit 0
+  fi
+  alert "Port $PORT is already in use by another app.\n\nStop that app or set a different PORT before launching Postmates Promo Tracker."
+  exit 1
 fi
 
 # ── Check Node.js ─────────────────────────────────────────────────────────────
@@ -36,6 +40,11 @@ fi
 
 NODE_VER=$("$NODE_BIN" -e "process.stdout.write(process.version)")
 echo "Using Node.js $NODE_VER at $NODE_BIN"
+
+if ! "$NODE_BIN" -e "const [M,m,p]=process.versions.node.split('.').map(Number); process.exit(M>20 || (M===20 && (m>18 || (m===18 && p>=1))) ? 0 : 1)"; then
+  alert "Node.js 20.18.1 or newer is required.\n\nFound $NODE_VER at $NODE_BIN. Install a newer Node.js LTS version, then try again."
+  exit 1
+fi
 
 # ── Check Chrome ──────────────────────────────────────────────────────────────
 CHROME="/Applications/Google Chrome.app"
@@ -80,11 +89,11 @@ for i in $(seq 1 20); do
 done
 
 # ── Open dashboard ────────────────────────────────────────────────────────────
-open "http://localhost:$PORT"
+open "http://127.0.0.1:$PORT"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Postmates Promo Tracker is running"
-echo "  Dashboard:  http://localhost:$PORT"
+echo "  Dashboard:  http://127.0.0.1:$PORT"
 echo "  Log file:   $LOG"
 echo ""
 echo "  Press Ctrl+C or close this window to stop."

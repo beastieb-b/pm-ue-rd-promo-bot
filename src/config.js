@@ -32,4 +32,5 @@ module.exports = {
 
   // Dashboard — use PORT env var if set (for preview panel), else 8766
   DASHBOARD_PORT: parseInt(process.env.PORT) || 8766,
+  DASHBOARD_HOST: process.env.HOST || '127.0.0.1',
 };

@@ -67,17 +67,18 @@ const scanStatus = {
 };
 
 function updateNextScanTime() {
-  const ms = scanStatus.intervalHours * 60 * 60 * 1000;
-  scanStatus.nextScanAt = scanStatus.lastScanAt
-    ? new Date(scanStatus.lastScanAt.getTime() + ms)
-    : new Date(Date.now() + ms);
+  scanStatus.nextScanAt = settings.nextRunFromInterval(scanStatus.intervalHours);
 }
 
 // Exposed so server.js can include it in /api/stats
 function getScanStatus() { return scanStatus; }
 
 async function runReddit() {
-  if (redditRunning) return;
+  if (redditRunning) {
+    const result = { error: 'Reddit check already running' };
+    server.broadcast({ type: 'reddit_done', ...result, scanStatus });
+    return result;
+  }
   redditRunning = true;
   scanStatus.lastScanError = null;
   try {
@@ -97,17 +98,26 @@ async function runReddit() {
       if (result.queued > 0) console.log(`  Queued: ${result.queued} codes`);
     }
     server.broadcast({ type: 'reddit_done', ...result, scanStatus });
+    return result;
   } catch (err) {
     scanStatus.lastScanError = err.message;
     console.error('Reddit check crashed:', err.message);
+    const result = { error: err.message };
+    server.broadcast({ type: 'reddit_done', ...result, scanStatus });
+    return result;
   } finally {
     redditRunning = false;
   }
 }
 
 async function runApply(options = {}) {
-  if (applyRunning) return;
+  if (applyRunning) {
+    const result = { error: 'Apply run already running' };
+    server.broadcast({ type: 'apply_done', ...result });
+    return result;
+  }
   applyRunning = true;
+  scanStatus.applyRunning = true;
   try {
     console.log(`[${new Date().toLocaleTimeString()}] Running code applier...`);
     const result = await postmates.runApplyCodes({
@@ -123,12 +133,19 @@ async function runApply(options = {}) {
       const successes = result.results?.filter(r => r.result === 'success').length ?? 0;
       console.log(`  Applied: ${result.applied} | Successes: ${successes}`);
     }
+    scanStatus.lastApplyAt = new Date();
+    scanStatus.applyRunning = false;
     server.broadcast({ type: 'apply_done', ...result });
     return result;
   } catch (err) {
     console.error('Apply run crashed:', err.message);
+    scanStatus.applyRunning = false;
+    const result = { error: err.message };
+    server.broadcast({ type: 'apply_done', ...result });
+    return result;
   } finally {
     applyRunning = false;
+    scanStatus.applyRunning = false;
   }
 }
 

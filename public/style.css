@@ -29,6 +29,11 @@
   --teal:        #5AC8F5;
   --indigo:      #5E5CE6;
   --purple:      #BF5AF2;
+  --accent:      var(--blue);
+  --success:     var(--green);
+  --danger:      var(--red);
+  --warning:     var(--orange);
+  --info:        var(--teal);
 
   /* Fills */
   --blue-fill:   rgba(10, 132, 255, 0.18);
@@ -36,6 +41,9 @@
   --red-fill:    rgba(255, 69, 58, 0.15);
   --orange-fill: rgba(255, 159, 10, 0.15);
   --teal-fill:   rgba(90, 200, 245, 0.15);
+  --success-bg:  var(--green-fill);
+  --warning-bg:  var(--orange-fill);
+  --info-bg:     var(--teal-fill);
 
   /* Layout */
   --sidebar-w:   220px;

@@ -6,16 +6,31 @@ const cfg = require('./config');
 
 const SETTINGS_FILE = path.join(cfg.DATA_DIR, 'settings.json');
 const SERVICE_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.postmates.promo.plist');
+const SETUP_STATUS_TTL_MS = 10_000;
+let setupStatusCache = null;
+let setupStatusCacheAt = 0;
 
 const DEFAULTS = {
   scanIntervalHours: 2,
   applyIntervalHours: 4,
 };
 
+const SCAN_INTERVALS = [0.5, 1, 2, 3, 4, 6, 12, 24];
+const APPLY_INTERVALS = [1, 2, 3, 4, 6, 12, 24];
+
+function normalizeInterval(value, allowed, fallback) {
+  const n = Number(value);
+  return allowed.includes(n) ? n : fallback;
+}
+
 function load() {
   if (!fs.existsSync(SETTINGS_FILE)) return { ...DEFAULTS };
   try {
-    return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+    const loaded = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+    return {
+      scanIntervalHours: normalizeInterval(loaded.scanIntervalHours, SCAN_INTERVALS, DEFAULTS.scanIntervalHours),
+      applyIntervalHours: normalizeInterval(loaded.applyIntervalHours, APPLY_INTERVALS, DEFAULTS.applyIntervalHours),
+    };
   } catch {
     return { ...DEFAULTS };
   }
@@ -23,7 +38,14 @@ function load() {
 
 function save(updates) {
   const current = load();
-  const next = { ...current, ...updates };
+  const next = {
+    scanIntervalHours: updates.scanIntervalHours !== undefined
+      ? normalizeInterval(updates.scanIntervalHours, SCAN_INTERVALS, current.scanIntervalHours)
+      : current.scanIntervalHours,
+    applyIntervalHours: updates.applyIntervalHours !== undefined
+      ? normalizeInterval(updates.applyIntervalHours, APPLY_INTERVALS, current.applyIntervalHours)
+      : current.applyIntervalHours,
+  };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
   return next;
 }
@@ -40,6 +62,40 @@ function hoursToCron(hours) {
   if (h === 1) return '0 * * * *';
   if (h >= 24) return '0 0 * * *';
   return `0 */${h} * * *`;
+}
+
+function nextRunFromInterval(hours, now = new Date()) {
+  const n = Number(hours);
+  const next = new Date(now);
+  next.setSeconds(0, 0);
+
+  if (n < 1) {
+    const mins = Math.round(n * 60);
+    const nextMinute = Math.ceil((next.getMinutes() + 1) / mins) * mins;
+    if (nextMinute >= 60) {
+      next.setHours(next.getHours() + 1, 0, 0, 0);
+    } else {
+      next.setMinutes(nextMinute);
+    }
+    return next;
+  }
+
+  const h = Math.round(n);
+  next.setMinutes(0, 0, 0);
+  if (h >= 24) {
+    next.setDate(next.getDate() + 1);
+    next.setHours(0);
+    return next;
+  }
+
+  const nextHour = Math.ceil((next.getHours() + 1) / h) * h;
+  if (nextHour >= 24) {
+    next.setDate(next.getDate() + 1);
+    next.setHours(0);
+  } else {
+    next.setHours(nextHour);
+  }
+  return next;
 }
 
 function isLoggedIn() {
@@ -74,6 +130,11 @@ function isServiceInstalled() {
 }
 
 function getSetupStatus() {
+  const now = Date.now();
+  if (setupStatusCache && now - setupStatusCacheAt < SETUP_STATUS_TTL_MS) {
+    return setupStatusCache;
+  }
+
   const loggedIn = isLoggedIn();
   const oldCronActive = hasOldCronJob();
   const serviceInstalled = isServiceInstalled();
@@ -111,7 +172,18 @@ function getSetupStatus() {
   const allRequiredDone = steps.filter(s => s.required).every(s => s.done);
   const allDone = steps.every(s => s.done);
 
-  return { steps, allRequiredDone, allDone };
+  setupStatusCache = { steps, allRequiredDone, allDone };
+  setupStatusCacheAt = now;
+  return setupStatusCache;
 }
 
-module.exports = { load, save, hoursToCron, isLoggedIn, hasOldCronJob, isServiceInstalled, getSetupStatus, DEFAULTS };
+function invalidateSetupStatus() {
+  setupStatusCache = null;
+  setupStatusCacheAt = 0;
+}
+
+module.exports = {
+  load, save, hoursToCron, nextRunFromInterval,
+  normalizeInterval, SCAN_INTERVALS, APPLY_INTERVALS,
+  isLoggedIn, hasOldCronJob, isServiceInstalled, getSetupStatus, invalidateSetupStatus, DEFAULTS,
+};

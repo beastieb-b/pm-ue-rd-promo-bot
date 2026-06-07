@@ -6,6 +6,8 @@ const state = require('./state');
 const { notifySuccess } = require('./notify');
 
 let _context = null;
+let _setupRunning = false;
+let _applyRunning = false;
 
 // Tracks actual login state based on real navigation results (not cookies)
 // null = unknown, true = confirmed working, false = confirmed not logged in
@@ -51,18 +53,25 @@ async function closeBrowser() {
 // ── First-run setup: open headed browser so user can log in ─────────────────
 
 async function setupLogin() {
+  if (_applyRunning) throw new Error('Code applier is running; try login again when it finishes');
+  if (_setupRunning) throw new Error('Login setup is already running');
+  _setupRunning = true;
   console.log('\n🔐 Opening Postmates in Chrome for login...');
   console.log('   Please log in, then close the browser window when done.\n');
 
-  const ctx = await getBrowserContext(false); // headed
-  const page = await ctx.newPage();
-  await page.goto('https://postmates.com', { waitUntil: 'domcontentloaded' });
+  try {
+    const ctx = await getBrowserContext(false); // headed
+    const page = await ctx.newPage();
+    await page.goto('https://postmates.com', { waitUntil: 'domcontentloaded' });
 
-  // Wait until user closes the browser
-  await new Promise(resolve => ctx.on('close', resolve));
-  _context = null;
-  _sessionValid = null; // reset — will be confirmed on next apply run
-  console.log('\n✅ Browser closed — login session saved.\n');
+    // Wait until user closes the browser
+    await new Promise(resolve => ctx.on('close', resolve));
+    _context = null;
+    _sessionValid = null; // reset — will be confirmed on next apply run
+    console.log('\n✅ Browser closed — login session saved.\n');
+  } finally {
+    _setupRunning = false;
+  }
 }
 
 // ── Result detection from page content ──────────────────────────────────────
@@ -305,89 +314,94 @@ async function applyCode(page, code) {
 // ── Main apply run ───────────────────────────────────────────────────────────
 
 async function runApplyCodes(options = {}) {
+  if (_setupRunning) return { error: 'Login setup is running' };
+  if (_applyRunning) return { error: 'Apply run already running' };
+  _applyRunning = true;
   const { maxCodes = cfg.MAX_CODES_PER_RUN, onProgress } = options;
 
   state.appendLog({ type: 'apply_run_start' });
 
-  const queue = state.getQueue();
-  const processed = new Set(state.getProcessed().map(r => r.code));
-  const pending = queue.filter(c => !processed.has(c)).slice(0, maxCodes);
-
-  if (!pending.length) {
-    state.appendLog({ type: 'apply_run_done', reason: 'no_pending_codes' });
-    return { applied: 0, results: [], reason: 'No codes in queue' };
-  }
-
-  let ctx;
+  let page = null;
   try {
+    const queue = state.getQueue();
+    const processed = new Set(state.getProcessed().map(r => r.code));
+    const pending = queue.filter(c => !processed.has(c)).slice(0, maxCodes);
+
+    if (!pending.length) {
+      state.appendLog({ type: 'apply_run_done', reason: 'no_pending_codes' });
+      return { applied: 0, results: [], reason: 'No codes in queue' };
+    }
+
     // Must run headed — Postmates detects and blocks headless Chrome
-    ctx = await getBrowserContext(false);
+    const ctx = await getBrowserContext(false);
+    page = await ctx.newPage();
+    const results = [];
+    let rateLimited = false;
+
+    for (const code of pending) {
+      if (rateLimited) break;
+
+      if (onProgress) onProgress({ code, status: 'trying' });
+
+      let applyResult;
+      try {
+        applyResult = await applyCode(page, code);
+      } catch (err) {
+        applyResult = { result: 'error', detail: err.message.slice(0, 100) };
+      }
+
+      results.push({ code, ...applyResult });
+      state.appendLog({ type: 'code_result', code, result: applyResult.result, detail: applyResult.detail });
+
+      if (onProgress) onProgress({ code, status: applyResult.result, detail: applyResult.detail });
+
+      if (applyResult.result === 'ratelimited') {
+        rateLimited = true;
+        // Code that hit the limit + all remaining pending codes stay in queue automatically
+        // (markResult is never called → removeFromQueue is never called)
+        const remaining = pending.slice(pending.indexOf(code)); // includes this code
+        state.appendLog({ type: 'rate_limited', code, codes_preserved: remaining.length });
+        if (onProgress) onProgress({ code, status: 'rate_limited_stop', preserved: remaining.length });
+        break;
+      }
+
+      if (['not_logged_in', 'error', 'unknown'].includes(applyResult.result)) {
+        // Transient or ambiguous failure — code stays in queue and retries automatically next run
+        state.appendLog({ type: 'code_deferred', code, reason: applyResult.result, note: 'will retry next run' });
+        continue;
+      }
+
+      // Permanent results (success / rejected) — mark and remove from queue
+      state.markResult(code, applyResult.result, applyResult.detail);
+
+      if (applyResult.result === 'success') {
+        notifySuccess(code, applyResult.detail);
+      }
+
+      // Wait between codes to avoid rate limiting (skip wait after last code)
+      if (code !== pending[pending.length - 1] && !rateLimited) {
+        if (onProgress) onProgress({ code, status: 'waiting', waitMs: cfg.CODE_WAIT_MS });
+        await page.waitForTimeout(cfg.CODE_WAIT_MS);
+      }
+    }
+
+    state.appendLog({
+      type: 'apply_run_done',
+      applied: results.length,
+      successes: results.filter(r => r.result === 'success').length,
+      rateLimited,
+    });
+
+    return { applied: results.length, results, rateLimited };
   } catch (err) {
     state.appendLog({ type: 'apply_run_error', error: err.message });
-    return { error: `Browser failed to launch: ${err.message}` };
+    return { error: `Apply run failed: ${err.message}` };
+  } finally {
+    if (page) {
+      try { await page.close(); } catch {}
+    }
+    _applyRunning = false;
   }
-
-  const page = await ctx.newPage();
-  const results = [];
-  let rateLimited = false;
-
-  for (const code of pending) {
-    if (rateLimited) break;
-
-    if (onProgress) onProgress({ code, status: 'trying' });
-
-    let applyResult;
-    try {
-      applyResult = await applyCode(page, code);
-    } catch (err) {
-      applyResult = { result: 'error', detail: err.message.slice(0, 100) };
-    }
-
-    results.push({ code, ...applyResult });
-    state.appendLog({ type: 'code_result', code, result: applyResult.result, detail: applyResult.detail });
-
-    if (onProgress) onProgress({ code, status: applyResult.result, detail: applyResult.detail });
-
-    if (applyResult.result === 'ratelimited') {
-      rateLimited = true;
-      // Code that hit the limit + all remaining pending codes stay in queue automatically
-      // (markResult is never called → removeFromQueue is never called)
-      const remaining = pending.slice(pending.indexOf(code)); // includes this code
-      state.appendLog({ type: 'rate_limited', code, codes_preserved: remaining.length });
-      if (onProgress) onProgress({ code, status: 'rate_limited_stop', preserved: remaining.length });
-      break;
-    }
-
-    if (applyResult.result === 'not_logged_in' || applyResult.result === 'error') {
-      // Transient failure — code stays in queue and retries automatically next run
-      state.appendLog({ type: 'code_deferred', code, reason: applyResult.result, note: 'will retry next run' });
-      continue;
-    }
-
-    // Permanent results (success / rejected / unknown) — mark and remove from queue
-    state.markResult(code, applyResult.result, applyResult.detail);
-
-    if (applyResult.result === 'success') {
-      notifySuccess(code, applyResult.detail);
-    }
-
-    // Wait between codes to avoid rate limiting (skip wait after last code)
-    if (code !== pending[pending.length - 1] && !rateLimited) {
-      if (onProgress) onProgress({ code, status: 'waiting', waitMs: cfg.CODE_WAIT_MS });
-      await page.waitForTimeout(cfg.CODE_WAIT_MS);
-    }
-  }
-
-  await page.close();
-
-  state.appendLog({
-    type: 'apply_run_done',
-    applied: results.length,
-    successes: results.filter(r => r.result === 'success').length,
-    rateLimited,
-  });
-
-  return { applied: results.length, results, rateLimited };
 }
 
 module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid };

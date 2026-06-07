@@ -198,32 +198,33 @@ async function scanSubreddit({ detectFn, getThreadId, getThreadMonth, saveThread
 async function runRedditCheck({ onProgress } = {}) {
   state.appendLog({ type: 'reddit_check_start' });
 
-  const [pm, ue] = await Promise.all([
-    scanSubreddit({
-      detectFn: detectCurrentThread,
-      getThreadId: state.getThreadId,
-      getThreadMonth: state.getThreadMonth,
-      saveThreadId: state.saveThreadId,
-      getTriedState: state.getTriedState,
-      saveTriedState: state.saveTriedState,
-      monthlyReset: state.monthlyReset,
-      subreddit: 'postmates',
-      label: 'Postmates',
-      onProgress,
-    }),
-    scanSubreddit({
-      detectFn: detectUberEatsThread,
-      getThreadId: state.getUEThreadId,
-      getThreadMonth: state.getUEThreadMonth,
-      saveThreadId: state.saveUEThreadId,
-      getTriedState: state.getUETriedState,
-      saveTriedState: state.saveUETriedState,
-      monthlyReset: state.ueMonthlyReset,
-      subreddit: 'UberEATS',
-      label: 'UberEATS',
-      onProgress,
-    }),
-  ]);
+  // Postmates reset archives the shared queue/processed files. Run it before
+  // UberEATS so a Postmates monthly rollover cannot erase freshly queued UE codes.
+  const pm = await scanSubreddit({
+    detectFn: detectCurrentThread,
+    getThreadId: state.getThreadId,
+    getThreadMonth: state.getThreadMonth,
+    saveThreadId: state.saveThreadId,
+    getTriedState: state.getTriedState,
+    saveTriedState: state.saveTriedState,
+    monthlyReset: state.monthlyReset,
+    subreddit: 'postmates',
+    label: 'Postmates',
+    onProgress,
+  });
+
+  const ue = await scanSubreddit({
+    detectFn: detectUberEatsThread,
+    getThreadId: state.getUEThreadId,
+    getThreadMonth: state.getUEThreadMonth,
+    saveThreadId: state.saveUEThreadId,
+    getTriedState: state.getUETriedState,
+    saveTriedState: state.saveUETriedState,
+    monthlyReset: state.ueMonthlyReset,
+    subreddit: 'UberEATS',
+    label: 'UberEATS',
+    onProgress,
+  });
 
   const totalNew = (pm.newCodes || 0) + (ue.newCodes || 0);
   const totalQueued = (pm.queued || 0) + (ue.queued || 0);

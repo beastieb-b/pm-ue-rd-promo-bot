@@ -16,18 +16,28 @@ function getQueue() {
     .split('\n').map(l => l.trim()).filter(Boolean);
 }
 
+function normalizeCode(code) {
+  if (typeof code !== 'string') return null;
+  const normalized = code.trim().toUpperCase();
+  return /^[A-Z0-9_-]{4,32}$/.test(normalized) ? normalized : null;
+}
+
 function addToQueue(codes) {
   const existing = new Set(getQueue());
   const processed = new Set(getProcessed().map(r => r.code));
-  const newCodes = codes.filter(c => !existing.has(c) && !processed.has(c));
+  const cleanCodes = [...new Set(codes.map(normalizeCode).filter(Boolean))];
+  const newCodes = cleanCodes.filter(c => !existing.has(c) && !processed.has(c));
   if (!newCodes.length) return 0;
   fs.appendFileSync(cfg.QUEUE_FILE, newCodes.join('\n') + '\n');
   return newCodes.length;
 }
 
 function removeFromQueue(code) {
-  const queue = getQueue().filter(c => c !== code);
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+  const queue = getQueue().filter(c => c !== normalized);
   fs.writeFileSync(cfg.QUEUE_FILE, queue.join('\n') + (queue.length ? '\n' : ''));
+  return true;
 }
 
 // ── Processed results ────────────────────────────────────────────────────────
@@ -51,32 +61,42 @@ function getProcessed() {
 }
 
 function deleteResult(code) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+
   // 1. Remove from processed.txt
   if (fs.existsSync(cfg.PROCESSED_FILE)) {
     const lines = fs.readFileSync(cfg.PROCESSED_FILE, 'utf8')
       .split('\n').filter(Boolean)
       .filter(line => {
         const entryCode = line.includes('\t') ? line.split('\t')[0] : line.slice(0, line.lastIndexOf(':'));
-        return entryCode !== code;
+        return entryCode !== normalized;
       });
     fs.writeFileSync(cfg.PROCESSED_FILE, lines.join('\n') + (lines.length ? '\n' : ''));
   }
 
   // 2. Remove from tried_codes.json so the next Reddit scan re-queues it
   const tried = getTriedState();
-  tried.tried_codes = tried.tried_codes.filter(c => c !== code);
-  tried.successful_codes = (tried.successful_codes || []).filter(c => c !== code);
-  tried.failed_codes = (tried.failed_codes || []).filter(c => c !== code);
+  tried.tried_codes = tried.tried_codes.filter(c => c !== normalized);
+  tried.successful_codes = (tried.successful_codes || []).filter(c => c !== normalized);
+  tried.failed_codes = (tried.failed_codes || []).filter(c => c !== normalized);
   saveTriedState(tried);
+
+  const ueTried = getUETriedState();
+  ueTried.tried_codes = (ueTried.tried_codes || []).filter(c => c !== normalized);
+  saveUETriedState(ueTried);
 
   return true;
 }
 
 function markResult(code, result, detail = null) {
-  removeFromQueue(code);
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+  removeFromQueue(normalized);
   const safeDetail = detail ? detail.replace(/[\t\n\r]/g, ' ').slice(0, 120) : '';
   const ts = new Date().toISOString();
-  fs.appendFileSync(cfg.PROCESSED_FILE, `${code}\t${result}\t${safeDetail}\t${ts}\n`);
+  fs.appendFileSync(cfg.PROCESSED_FILE, `${normalized}\t${result}\t${safeDetail}\t${ts}\n`);
+  return true;
 }
 
 // ── Tried codes (codes found in Reddit thread, avoids re-queuing) ────────────
@@ -221,6 +241,7 @@ function getStats() {
 
 module.exports = {
   ensureDirs,
+  normalizeCode,
   getQueue, addToQueue, removeFromQueue,
   getProcessed, markResult, deleteResult,
   getTriedState, saveTriedState,

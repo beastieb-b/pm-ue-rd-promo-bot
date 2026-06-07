@@ -11,6 +11,13 @@ const APP_DIR = path.join(__dirname, '..');
 const LABEL = 'com.postmates.promo';
 const PLIST_PATH = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
 const NODE_PATH = execSync('which node').toString().trim();
+const nodeVersion = execSync(`"${NODE_PATH}" -e "process.stdout.write(process.versions.node)"`).toString().trim();
+const [nodeMajor, nodeMinor, nodePatch] = nodeVersion.split('.').map(Number);
+
+if (!(nodeMajor > 20 || (nodeMajor === 20 && (nodeMinor > 18 || (nodeMinor === 18 && nodePatch >= 1))))) {
+  console.error(`Node.js 20.18.1 or newer is required. Found v${nodeVersion} at ${NODE_PATH}.`);
+  process.exit(1);
+}
 
 const uninstall = process.argv.includes('--uninstall');
 

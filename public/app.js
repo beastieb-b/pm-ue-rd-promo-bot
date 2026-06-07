@@ -8,6 +8,20 @@ let eventSource = null;
 let liveLines = [];
 let currentSettings = { scanIntervalHours: 2, applyIntervalHours: 4 };
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+function cssToken(value) {
+  return String(value || '').replace(/[^a-z0-9_-]/gi, '');
+}
+
 /* ── Init ──────────────────────────────────────────────────────────────── */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -110,7 +124,7 @@ function renderOverview() {
   if (stats.successCodes && stats.successCodes.length) {
     count.textContent = stats.successCodes.length;
     successEl.innerHTML = stats.successCodes
-      .map(code => `<span class="success-chip">✅ ${code}</span>`)
+      .map(code => `<span class="success-chip">✅ ${escapeHtml(code)}</span>`)
       .join('');
   } else {
     count.textContent = '0';
@@ -122,11 +136,11 @@ function renderOverview() {
   if (recent.length) {
     feed.innerHTML = recent.map(r => {
       const icon = r.result === 'success' ? '✅' : r.result === 'ratelimited' ? '⏳' : '❌';
-      const detail = r.detail ? `<span style="color:var(--label-3)"> · ${r.detail}</span>` : '';
+      const detail = r.detail ? `<span style="color:var(--label-3)"> · ${escapeHtml(r.detail)}</span>` : '';
       const when = r.ts ? `<span style="color:var(--label-3);font-size:11px;margin-left:auto;white-space:nowrap">${timeAgo(new Date(r.ts))}</span>` : '';
       return `<div class="activity-item">
-        <span class="activity-dot dot-${r.result}"></span>
-        <span class="activity-text">${icon} <strong>${r.code}</strong> — ${resultLabel(r.result)}${detail}</span>
+        <span class="activity-dot dot-${cssToken(r.result)}"></span>
+        <span class="activity-text">${icon} <strong>${escapeHtml(r.code)}</strong> — ${escapeHtml(resultLabel(r.result))}${detail}</span>
         ${when}
       </div>`;
     }).join('');
@@ -152,7 +166,7 @@ function renderScanStatus() {
   if (s.lastScanError) {
     dot.className = 'scan-dot error';
     label.textContent = 'Scan error';
-    meta.innerHTML = `<span class="scan-meta-item" style="color:var(--danger)">${s.lastScanError}</span>`;
+    meta.innerHTML = `<span class="scan-meta-item" style="color:var(--danger)">${escapeHtml(s.lastScanError)}</span>`;
     return;
   }
 
@@ -230,19 +244,19 @@ function renderStepsList(containerId, steps) {
     const optionalTag = !step.required ? '<span class="step-optional-tag">Optional</span>' : '';
 
     return `
-      <div class="setup-step ${cls}" id="step-${step.id}" onclick="toggleStep('${step.id}', ${step.done})">
+      <div class="setup-step ${escapeHtml(cls)}" id="step-${escapeHtml(step.id)}" onclick="toggleStep('${escapeHtml(step.id)}', ${Boolean(step.done)})">
         <div class="setup-step-header">
           <div class="step-icon">${icon}</div>
           <div class="step-body">
-            <div class="step-label">${step.label} ${optionalTag}</div>
-            <div class="step-desc">${step.done ? 'Complete' : step.description}</div>
+            <div class="step-label">${escapeHtml(step.label)} ${optionalTag}</div>
+            <div class="step-desc">${step.done ? 'Complete' : escapeHtml(step.description)}</div>
           </div>
           ${chevron}
         </div>
         ${!step.done ? `
         <div class="setup-step-detail">
-          <div class="step-command">${step.command}</div>
-          <div class="step-hint">${step.hint}</div>
+          <div class="step-command">${escapeHtml(step.command)}</div>
+          <div class="step-hint">${escapeHtml(step.hint)}</div>
         </div>` : ''}
       </div>`;
   }).join('');
@@ -348,12 +362,24 @@ function renderQueue(queue) {
     return;
   }
 
-  el.innerHTML = queue.map(code => `
-    <div class="queue-item" id="q-${code}">
-      <span class="queue-code">${code}</span>
-      <button class="btn btn-danger btn-sm" onclick="removeCode('${code}')">Remove</button>
-    </div>
-  `).join('');
+  el.innerHTML = '';
+  queue.forEach(code => {
+    const row = document.createElement('div');
+    row.className = 'queue-item';
+    row.id = `q-${cssToken(code)}`;
+
+    const codeEl = document.createElement('span');
+    codeEl.className = 'queue-code';
+    codeEl.textContent = code;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-danger btn-sm';
+    btn.textContent = 'Remove';
+    btn.addEventListener('click', () => removeCode(code));
+
+    row.append(codeEl, btn);
+    el.appendChild(row);
+  });
 }
 
 function renderResults() {
@@ -369,17 +395,44 @@ function renderResults() {
     return;
   }
 
-  tbody.innerHTML = [...data].reverse().map(r => `
-    <tr class="result-row" id="result-row-${r.code}">
-      <td class="result-code">${r.code}</td>
-      <td><span class="result-badge ${r.result}">${resultIcon(r.result)} ${resultLabel(r.result)}</span></td>
-      <td style="color:var(--label-3)">${r.detail || '—'}</td>
-      <td style="color:var(--label-3);font-size:12px;white-space:nowrap">${r.ts ? timeAgo(new Date(r.ts)) : '—'}</td>
-      <td class="result-delete-cell">
-        <button class="result-delete-btn" onclick="deleteResult('${r.code}')" title="Remove">✕</button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = '';
+  [...data].reverse().forEach(r => {
+    const row = document.createElement('tr');
+    row.className = 'result-row';
+    row.id = `result-row-${cssToken(r.code)}`;
+
+    const codeCell = document.createElement('td');
+    codeCell.className = 'result-code';
+    codeCell.textContent = r.code;
+
+    const resultCell = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `result-badge ${cssToken(r.result)}`;
+    badge.textContent = `${resultIcon(r.result)} ${resultLabel(r.result)}`;
+    resultCell.appendChild(badge);
+
+    const detailCell = document.createElement('td');
+    detailCell.style.color = 'var(--label-3)';
+    detailCell.textContent = r.detail || '—';
+
+    const timeCell = document.createElement('td');
+    timeCell.style.color = 'var(--label-3)';
+    timeCell.style.fontSize = '12px';
+    timeCell.style.whiteSpace = 'nowrap';
+    timeCell.textContent = r.ts ? timeAgo(new Date(r.ts)) : '—';
+
+    const deleteCell = document.createElement('td');
+    deleteCell.className = 'result-delete-cell';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'result-delete-btn';
+    deleteBtn.title = 'Remove';
+    deleteBtn.textContent = '✕';
+    deleteBtn.addEventListener('click', () => deleteResult(r.code));
+    deleteCell.appendChild(deleteBtn);
+
+    row.append(codeCell, resultCell, detailCell, timeCell, deleteCell);
+    tbody.appendChild(row);
+  });
 }
 
 function renderLog() {
@@ -396,8 +449,8 @@ function renderLog() {
     const detail = formatLogDetail(entry);
     return `<div class="log-entry">
       <span class="log-ts">${ts}</span>
-      <span class="log-type ${entry.type}">${entry.type}</span>
-      <span class="log-detail">${detail}</span>
+      <span class="log-type ${cssToken(entry.type)}">${escapeHtml(entry.type)}</span>
+      <span class="log-detail">${escapeHtml(detail)}</span>
     </div>`;
   }).join('');
 }
@@ -482,6 +535,13 @@ function handleSSE(data) {
 
     case 'apply_done':
       loadAll();
+      if (data.error) {
+        showToast(`Apply failed: ${data.error}`, 'error');
+        setLastRun('apply', 'Error', true);
+        setRunning('apply', false);
+        finishLiveCard('apply', 0, 0, false);
+        break;
+      }
       const successes = (data.results || []).filter(r => r.result === 'success').length;
       let toastMsg = successes ? `${successes} code${successes > 1 ? 's' : ''} worked! 🎉` : `Applied ${data.applied} codes — none worked this run`;
       if (data.rateLimited) toastMsg += ' · Rate limited, remaining codes saved for next run';
@@ -525,6 +585,13 @@ function handleSSE(data) {
       showToast(`Error: ${data.message}`, 'error');
       setRunning('reddit', false);
       setRunning('apply', false);
+      {
+        const setupBtn = document.getElementById('btn-setup');
+        if (setupBtn) {
+          setupBtn.disabled = false;
+          setupBtn.textContent = stats.loggedIn === true ? '🔄 Re-login' : '🔐 Log in to Postmates';
+        }
+      }
       break;
   }
 }
@@ -533,8 +600,15 @@ function handleSSE(data) {
 
 function showLiveCard() {
   const card = document.getElementById('live-status-card');
+  card.style.display = '';
+}
+
+function resetLiveCard() {
+  const card = document.getElementById('live-status-card');
+  const header = card.querySelector('.card-header');
   const log = document.getElementById('live-log');
   card.style.display = '';
+  if (header) header.innerHTML = '<h3>Live Progress</h3><span class="spinner"></span>';
   log.innerHTML = '';
   liveLines = [];
 }
@@ -670,7 +744,7 @@ function appendRedditProgress(data) {
 
 async function triggerReddit() {
   setRunning('reddit', true);
-  showLiveCard();
+  resetLiveCard();
   appendLiveLog({ status: 'trying', code: 'Starting Reddit check...' });
   try {
     await fetch('/api/run/reddit', { method: 'POST' });
@@ -682,7 +756,7 @@ async function triggerReddit() {
 
 async function triggerApply() {
   setRunning('apply', true);
-  showLiveCard();
+  resetLiveCard();
   appendLiveLog({ status: 'trying', code: 'Starting code applier...' });
   try {
     await fetch('/api/run/apply', { method: 'POST' });
@@ -718,7 +792,7 @@ async function addCode() {
 
 async function deleteResult(code) {
   // Optimistically remove the row immediately
-  const row = document.getElementById(`result-row-${code}`);
+  const row = document.getElementById(`result-row-${cssToken(code)}`);
   if (row) {
     row.style.opacity = '0.3';
     row.style.transition = 'opacity 0.15s';
@@ -736,7 +810,7 @@ async function deleteResult(code) {
 
 async function removeCode(code) {
   try {
-    await fetch(`/api/queue/${code}`, { method: 'DELETE' });
+    await fetch(`/api/queue/${encodeURIComponent(code)}`, { method: 'DELETE' });
     loadQueue();
     loadAll();
   } catch {}

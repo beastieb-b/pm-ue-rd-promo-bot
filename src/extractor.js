@@ -51,6 +51,7 @@ const FILTER_WORDS = new Set([
 
   // Tech / markup
   'NBSP', 'HTTP', 'HREF', 'TRUE', 'FALSE', 'NULL', 'NONE',
+  'HTML', 'IMG', 'SRC', 'ONERROR', 'ONLOAD', 'ALERT', 'SCRIPT',
   'EDIT', 'NOTE', 'TLDR', 'TLDW',
 
   // Competitors / brands (not promo codes)
@@ -101,13 +102,16 @@ function extractCodes(commentTexts) {
 
   for (const text of commentTexts) {
     if (!text || text.length < 3) continue;
+    const cleaned = text
+      .replace(/https?:\/\/\S+/gi, ' ')
+      .replace(/<[^>]*>/g, ' ');
 
     // Pattern 1: All-caps words that look like promo codes
     // - Words with at least one digit are almost always codes → accept at 4+ chars
     // - Pure-letter words are often city names / English words → require 8+ chars
     //   OR require them to appear in explicit promo context (code:, try:, etc.)
-    const capsMatches = text.matchAll(/\b([A-Z][A-Z0-9]{3,})\b/g);
-    const hasPromoContext = /\b(code|promo|use|try|apply|coupon|discount)\b[:\s]+/i.test(text);
+    const capsMatches = cleaned.matchAll(/\b([A-Z][A-Z0-9]{3,})\b/g);
+    const hasPromoContext = /\b(code|promo|use|try|apply|coupon|discount)\b[:\s]+/i.test(cleaned);
     for (const m of capsMatches) {
       const w = m[1];
       if (FILTER_WORDS.has(w)) continue;
@@ -120,13 +124,13 @@ function extractCodes(commentTexts) {
     }
 
     // Pattern 2: Mixed case with numbers (e.g., OneDay10, 1XPER, Waves25)
-    const mixedAlphaNum = text.matchAll(/\b([A-Za-z]+\d+[A-Za-z0-9]*)\b/g);
+    const mixedAlphaNum = cleaned.matchAll(/\b([A-Za-z]+\d+[A-Za-z0-9]*)\b/g);
     for (const m of mixedAlphaNum) {
       if (m[1].length >= 4 && !FILTER_WORDS.has(m[1].toUpperCase())) {
         codes.add(m[1].toUpperCase());
       }
     }
-    const mixedNumAlpha = text.matchAll(/\b(\d+[A-Za-z]+[A-Za-z0-9]*)\b/g);
+    const mixedNumAlpha = cleaned.matchAll(/\b(\d+[A-Za-z]+[A-Za-z0-9]*)\b/g);
     for (const m of mixedNumAlpha) {
       if (m[1].length >= 4 && !FILTER_WORDS.has(m[1].toUpperCase())) {
         codes.add(m[1].toUpperCase());
@@ -134,20 +138,20 @@ function extractCodes(commentTexts) {
     }
 
     // Pattern 3: Word near "code:", "try:", "use:", "promo:" followed by $ or "off"
-    const promoCtx = text.matchAll(/(?:^|\n|code[:\s]+|try[:\s]+|use[:\s]+|promo[:\s]+)([A-Za-z]{4,})(?:\s+\$|\s+\d+%?\s*off)/gi);
+    const promoCtx = cleaned.matchAll(/(?:^|\n|code[:\s]+|try[:\s]+|use[:\s]+|promo[:\s]+)([A-Za-z]{4,})(?:\s+\$|\s+\d+%?\s*off)/gi);
     for (const m of promoCtx) {
       if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
     }
 
     // Pattern 4: "WORD $X off" — word immediately before a dollar amount + off
-    const dollarOff = text.matchAll(/\b([A-Za-z]{4,})\s+\$\d+\s+off\b/gi);
+    const dollarOff = cleaned.matchAll(/\b([A-Za-z]{4,})\s+\$\d+\s+off\b/gi);
     for (const m of dollarOff) {
       if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
     }
 
     // Pattern 5: Standalone capitalized word on its own line in a promo-context comment
-    if (/\$|off|promo|code|discount|coupon|deal/i.test(text)) {
-      const standalone = text.matchAll(/(?:^|\n)\s*([A-Z][a-z]{3,})\s/g);
+    if (/\$|off|promo|code|discount|coupon|deal/i.test(cleaned)) {
+      const standalone = cleaned.matchAll(/(?:^|\n)\s*([A-Z][a-z]{3,})\s/g);
       for (const m of standalone) {
         if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
       }
