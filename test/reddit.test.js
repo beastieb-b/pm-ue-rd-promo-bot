@@ -1,6 +1,6 @@
 const assert = require('assert');
 const { test } = require('node:test');
-const { parseSlickdealsThread, parseSimplyCodesPage } = require('../src/reddit');
+const { parseSlickdealsThread } = require('../src/reddit');
 
 const hasCheerio = (() => {
   try {
@@ -48,31 +48,4 @@ parserTest('filters new-customer Slickdeals offers', () => {
   `;
 
   assert.strictEqual(parseSlickdealsThread(html, 'https://slickdeals.net/f/example'), null);
-});
-
-parserTest('parses reusable SimplyCodes verification activity', () => {
-  const body = [
-    'Random heading',
-    'Jane reported promo code affeats10us526 as working successfully 2 hours ago',
-    'More surrounding text',
-    'Another user verified promo code affeats10us526 today',
-  ].join('\n');
-
-  const parsed = parseSimplyCodesPage(body, 'https://simplycodes.com/store/ubereats.com');
-  assert.strictEqual(parsed.length, 1);
-  assert.strictEqual(parsed[0].code, 'AFFEATS10US526');
-  assert.strictEqual(parsed[0].sourceKey, 'simplycodes_ubereats');
-  assert.strictEqual(parsed[0].statusHint, 'Recently verified');
-});
-
-parserTest('filters first-order and referral SimplyCodes entries', () => {
-  const body = [
-    'Alice reported promo code FIRST20 as working successfully',
-    'first order only for new customers',
-    'Bob verified promo code REFER25',
-    'referral bonus',
-  ].join('\n');
-
-  const parsed = parseSimplyCodesPage(body, 'https://simplycodes.com/store/ubereats.com');
-  assert.deepStrictEqual(parsed, []);
 });

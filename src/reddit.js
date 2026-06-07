@@ -6,7 +6,6 @@ const SOURCE_LABELS = {
   reddit_postmates: 'Reddit · Postmates',
   reddit_ubereats: 'Reddit · UberEATS',
   slickdeals_postmates: 'Slickdeals · Postmates',
-  simplycodes_ubereats: 'SimplyCodes · Uber Eats',
 };
 
 function getCheerio() {
@@ -387,74 +386,6 @@ async function scanSlickdeals(onProgress) {
   }
 }
 
-function parseSimplyCodesPage(body, url) {
-  const lines = body.split('\n');
-  const candidates = [];
-  const blocks = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/reported promo code .* as working successfully/i.test(line) || /verified promo code/i.test(line)) {
-      const block = lines.slice(Math.max(0, i - 4), Math.min(lines.length, i + 8)).join(' ');
-      blocks.push(block);
-    }
-  }
-
-  const seen = new Set();
-  for (const block of blocks) {
-    const match = block.match(/promo code\s+([a-z0-9_-]{4,32})/i);
-    const code = state.normalizeCode(match?.[1] || '');
-    if (!code || seen.has(code)) continue;
-    seen.add(code);
-    if (/\beats-/.test(code.toLowerCase())) continue;
-    if (/\b(first order|new customers?|first-time|referral|single-use)\b/i.test(block)) continue;
-
-    const worked = (block.match(/working successfully|verified/gi) || []).length;
-    candidates.push(buildCodeEntry(code, {
-      sourceKey: 'simplycodes_ubereats',
-      sourceUrl: url,
-      sourceTitle: 'SimplyCodes Uber Eats verification activity',
-      statusHint: worked > 1 ? 'Recently verified' : 'Verification activity',
-      statusNote: worked > 1 ? `${worked} recent verification mentions` : 'Seen in verification activity',
-      lastSeenAt: new Date().toISOString(),
-      worked,
-      existingUser: true,
-      singleUse: false,
-    }));
-  }
-
-  return candidates;
-}
-
-async function scanSimplyCodes(onProgress) {
-  const sourceKey = 'simplycodes_ubereats';
-  const label = SOURCE_LABELS[sourceKey];
-  const sourceUrl = 'https://simplycodes.com/store/ubereats.com';
-  onProgress?.({ source: label, step: 'fetching' });
-  setSourceStatus(sourceKey, { status: 'checking', note: 'Reviewing verification activity', sourceUrl });
-
-  try {
-    const { status, body } = await fetchUrl(sourceUrl);
-    if (status !== 200) throw new Error(`SimplyCodes returned ${status}`);
-    const candidates = parseSimplyCodesPage(body, sourceUrl);
-    const added = state.addToQueue(candidates);
-    setSourceStatus(sourceKey, {
-      status: candidates.length ? 'ok' : 'idle',
-      note: candidates.length
-        ? `${candidates.length} filtered code candidate${candidates.length === 1 ? '' : 's'} from verification activity`
-        : 'No reusable existing-user public codes passed the filter',
-      usableCodes: candidates.length,
-      queued: added,
-      sourceUrl,
-    });
-    onProgress?.({ source: label, step: 'done', commentsScanned: 0, newCodes: candidates.length, queued: added });
-    return { codesFound: candidates.length, newCodes: candidates.length, queued: added };
-  } catch (err) {
-    setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl });
-    // Don't broadcast an error progress event — supplemental source blocks are expected.
-    return { error: `${label} scan failed: ${err.message}` };
-  }
-}
-
 async function runRedditCheck({ onProgress } = {}) {
   state.appendLog({ type: 'reddit_check_start' });
 
@@ -485,15 +416,10 @@ async function runRedditCheck({ onProgress } = {}) {
   });
 
   const slickdeals = await scanSlickdeals(onProgress);
-  const simplycodes = await scanSimplyCodes(onProgress);
 
-  const scans = [pm, ue, slickdeals, simplycodes];
+  const scans = [pm, ue, slickdeals];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);
   const totalQueued = scans.reduce((sum, entry) => sum + (entry.queued || 0), 0);
-
-  // Only treat core Reddit source failures as top-level errors.
-  // Slickdeals/SimplyCodes are supplemental — 403s and scrape blocks are
-  // expected; their status is tracked in the source panel, not as scan failures.
   const coreErrors = [pm.error, ue.error].filter(Boolean);
 
   return {
@@ -505,7 +431,6 @@ async function runRedditCheck({ onProgress } = {}) {
     postmates: pm,
     ubereats: ue,
     slickdeals,
-    simplycodes,
     error: coreErrors.length > 0 ? coreErrors.join('; ') : null,
   };
 }
@@ -516,5 +441,4 @@ module.exports = {
   detectUberEatsThread,
   fetchComments,
   parseSlickdealsThread,
-  parseSimplyCodesPage,
 };
