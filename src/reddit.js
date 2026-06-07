@@ -489,7 +489,11 @@ async function runRedditCheck({ onProgress } = {}) {
   const scans = [pm, ue, slickdeals, simplycodes];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);
   const totalQueued = scans.reduce((sum, entry) => sum + (entry.queued || 0), 0);
-  const errors = scans.map(entry => entry.error).filter(Boolean);
+
+  // Only treat core Reddit source failures as top-level errors.
+  // Slickdeals/SimplyCodes are supplemental — 403s and scrape blocks are
+  // expected; their status is tracked in the source panel, not as scan failures.
+  const coreErrors = [pm.error, ue.error].filter(Boolean);
 
   return {
     threadId: pm.threadId,
@@ -501,7 +505,7 @@ async function runRedditCheck({ onProgress } = {}) {
     ubereats: ue,
     slickdeals,
     simplycodes,
-    error: errors.length > 0 ? errors.join('; ') : null,
+    error: coreErrors.length > 0 ? coreErrors.join('; ') : null,
   };
 }
 
