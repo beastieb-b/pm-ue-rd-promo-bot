@@ -341,12 +341,14 @@ function parseSlickdealsThread(body, url) {
 async function scanSlickdeals(onProgress) {
   const sourceKey = 'slickdeals_postmates';
   const label = SOURCE_LABELS[sourceKey];
-  const promoUrl = 'https://slickdeals.net/promo-codes/postmates/';
+  // Search for active (non-expired) deal threads that mention Postmates promo codes.
+  // The /promo-codes/postmates/ page only has generic %-off cards with no code strings.
+  const searchUrl = 'https://slickdeals.net/newsearch.php?q=postmates+promo+code&searcharea=deals&searchin=first_word&sort=newest&hideExpired=1';
   onProgress?.({ source: label, step: 'fetching' });
-  setSourceStatus(sourceKey, { status: 'checking', note: 'Scanning Postmates promo threads', sourceUrl: promoUrl });
+  setSourceStatus(sourceKey, { status: 'checking', note: 'Searching for active Postmates deals', sourceUrl: searchUrl });
 
   try {
-    const { status, body } = await fetchUrl(promoUrl);
+    const { status, body } = await fetchUrl(searchUrl);
     if (status !== 200) throw new Error(`Slickdeals returned ${status}`);
     const cheerio = getCheerio();
     const $ = cheerio.load(body);
@@ -356,7 +358,9 @@ async function scanSlickdeals(onProgress) {
       const text = normalizeText($(el).text());
       if (!href || !text) return;
       const absolute = href.startsWith('http') ? href : `https://slickdeals.net${href}`;
-      if (/postmates/i.test(text) && /\b(off|\$\d+)/i.test(text)) links.set(absolute, text);
+      // Deduplicate by path (strip query params)
+      const key = absolute.split('?')[0];
+      if (!links.has(key) && text.length > 10) links.set(key, text);
     });
 
     const candidates = [];
@@ -371,15 +375,17 @@ async function scanSlickdeals(onProgress) {
     const added = state.addToQueue(candidates);
     setSourceStatus(sourceKey, {
       status: candidates.length ? 'ok' : 'idle',
-      note: candidates.length ? `Found ${candidates.length} public code candidate${candidates.length === 1 ? '' : 's'}` : 'No existing-user public codes found',
+      note: candidates.length
+        ? `Found ${candidates.length} public code candidate${candidates.length === 1 ? '' : 's'}`
+        : links.size > 0 ? 'Deals found but none had extractable promo codes' : 'No active Postmates deals on Slickdeals right now',
       usableCodes: candidates.length,
       queued: added,
-      sourceUrl: promoUrl,
+      sourceUrl: searchUrl,
     });
     onProgress?.({ source: label, step: 'done', commentsScanned: 0, newCodes: candidates.length, queued: added });
     return { codesFound: candidates.length, newCodes: candidates.length, queued: added };
   } catch (err) {
-    setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl: promoUrl });
+    setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl: searchUrl });
     // Don't broadcast an error progress event — supplemental source blocks are expected.
     // The source status panel already reflects it.
     return { error: `${label} scan failed: ${err.message}` };
