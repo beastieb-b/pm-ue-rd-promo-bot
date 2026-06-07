@@ -381,7 +381,8 @@ async function scanSlickdeals(onProgress) {
     return { codesFound: candidates.length, newCodes: candidates.length, queued: added };
   } catch (err) {
     setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl: promoUrl });
-    onProgress?.({ source: label, step: 'error', message: err.message });
+    // Don't broadcast an error progress event — supplemental source blocks are expected.
+    // The source status panel already reflects it.
     return { error: `${label} scan failed: ${err.message}` };
   }
 }
@@ -449,7 +450,7 @@ async function scanSimplyCodes(onProgress) {
     return { codesFound: candidates.length, newCodes: candidates.length, queued: added };
   } catch (err) {
     setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl });
-    onProgress?.({ source: label, step: 'error', message: err.message });
+    // Don't broadcast an error progress event — supplemental source blocks are expected.
     return { error: `${label} scan failed: ${err.message}` };
   }
 }
