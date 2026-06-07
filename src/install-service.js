@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+// Installs a launchd service so the daemon auto-starts on login (Mac only).
+// Run: node src/install-service.js [--uninstall]
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
+
+const APP_DIR = path.join(__dirname, '..');
+const LABEL = 'com.postmates.promo';
+const PLIST_PATH = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+const NODE_PATH = execSync('which node').toString().trim();
+
+const uninstall = process.argv.includes('--uninstall');
+
+if (uninstall) {
+  try {
+    execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: 'ignore' });
+  } catch {}
+  if (fs.existsSync(PLIST_PATH)) {
+    fs.unlinkSync(PLIST_PATH);
+    console.log('✅ Service uninstalled.');
+  } else {
+    console.log('ℹ️  Service was not installed.');
+  }
+  process.exit(0);
+}
+
+const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NODE_PATH}</string>
+    <string>${path.join(APP_DIR, 'src', 'index.js')}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${APP_DIR}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${path.join(APP_DIR, 'data', 'daemon.log')}</string>
+  <key>StandardErrorPath</key>
+  <string>${path.join(APP_DIR, 'data', 'daemon-error.log')}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}</string>
+  </dict>
+</dict>
+</plist>`;
+
+fs.mkdirSync(path.dirname(PLIST_PATH), { recursive: true });
+fs.writeFileSync(PLIST_PATH, plist);
+
+try {
+  execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null; launchctl load "${PLIST_PATH}"`);
+  console.log('✅ Service installed and started.');
+  console.log(`   Plist: ${PLIST_PATH}`);
+  console.log(`   Dashboard: http://localhost:8766`);
+  console.log(`   Logs: ${path.join(APP_DIR, 'data', 'daemon.log')}`);
+  console.log('\n   To uninstall: node src/install-service.js --uninstall');
+} catch (err) {
+  console.error('⚠️  Service installed but launchctl failed:', err.message);
+  console.log('   Try running: launchctl load "' + PLIST_PATH + '"');
+}

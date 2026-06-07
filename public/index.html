@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Postmates Promo Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo">
+        <span class="logo-icon">🍔</span>
+        <span class="logo-text">Promo Tracker</span>
+      </div>
+
+      <nav class="nav">
+        <a href="#overview" class="nav-item active" data-section="overview">
+          <span class="nav-icon">📊</span> Overview
+        </a>
+        <a href="#queue" class="nav-item" data-section="queue">
+          <span class="nav-icon">📋</span> Queue
+          <span class="badge" id="queue-badge">0</span>
+        </a>
+        <a href="#results" class="nav-item" data-section="results">
+          <span class="nav-icon">✅</span> Results
+        </a>
+        <a href="#log" class="nav-item" data-section="log">
+          <span class="nav-icon">📜</span> Activity Log
+        </a>
+        <a href="#settings" class="nav-item" data-section="settings">
+          <span class="nav-icon">⚙️</span> Settings
+        </a>
+      </nav>
+
+      <div class="sidebar-actions">
+        <button class="btn btn-primary" id="btn-reddit" onclick="triggerReddit()">
+          <span>🔍</span> Check Reddit
+        </button>
+        <div class="last-run-label" id="last-reddit-run"></div>
+        <button class="btn btn-secondary" id="btn-apply" onclick="triggerApply()">
+          <span>⚡</span> Apply Codes
+        </button>
+        <div class="last-run-label" id="last-apply-run"></div>
+      </div>
+
+      <div class="status-indicator">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="status-text">Connecting...</span>
+      </div>
+
+      <button class="btn-restart" onclick="restartServer()">↺ Restart Server</button>
+      <button class="btn-quit" onclick="quitApp()">⏹ Quit App</button>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+
+      <!-- Setup Checklist (auto-hides when all required steps done) -->
+      <div id="setup-checklist" style="display:none">
+        <div class="setup-header">
+          <span class="setup-title">⚙️ Setup</span>
+          <span class="setup-subtitle" id="setup-subtitle"></span>
+        </div>
+        <div class="setup-steps" id="setup-steps"></div>
+      </div>
+
+      <!-- Overview Section -->
+      <section id="section-overview" class="section active">
+        <div class="section-header">
+          <h1>Overview</h1>
+          <div class="thread-badge" id="thread-badge">No thread loaded</div>
+        </div>
+
+        <!-- Scan status bar -->
+        <div class="scan-status-bar" id="scan-status-bar">
+          <div class="scan-pill" id="scan-pill">
+            <span class="scan-dot" id="scan-dot"></span>
+            <span id="scan-label">Loading...</span>
+          </div>
+          <div class="scan-meta" id="scan-meta"></div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card stat-success">
+            <div class="stat-value" id="stat-success">0</div>
+            <div class="stat-label">Codes Applied</div>
+            <div class="stat-sublabel">this month</div>
+          </div>
+          <div class="stat-card stat-queue">
+            <div class="stat-value" id="stat-queue">0</div>
+            <div class="stat-label">In Queue</div>
+            <div class="stat-sublabel">waiting to try</div>
+          </div>
+          <div class="stat-card stat-tried">
+            <div class="stat-value" id="stat-tried">0</div>
+            <div class="stat-label">Tried</div>
+            <div class="stat-sublabel">total this month</div>
+          </div>
+          <div class="stat-card stat-rate">
+            <div class="stat-value" id="stat-rate">—</div>
+            <div class="stat-label">Success Rate</div>
+            <div class="stat-sublabel">% of codes tried</div>
+          </div>
+        </div>
+
+        <div class="cards-row">
+          <div class="card">
+            <div class="card-header">
+              <h3>Successful Codes</h3>
+              <span class="card-badge success-badge" id="success-count">0</span>
+            </div>
+            <div class="success-list" id="success-list">
+              <div class="empty-state">No successful codes yet this month</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Recent Activity</h3>
+            </div>
+            <div class="activity-feed" id="activity-feed">
+              <div class="empty-state">No activity yet</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="live-status-card" style="display:none">
+          <div class="card-header">
+            <h3>Live Progress</h3>
+            <span class="spinner"></span>
+          </div>
+          <div class="live-log" id="live-log"></div>
+        </div>
+      </section>
+
+      <!-- Queue Section -->
+      <section id="section-queue" class="section">
+        <div class="section-header">
+          <h1>Code Queue</h1>
+          <div class="add-code-form">
+            <input type="text" id="add-code-input" placeholder="Add code manually..." class="code-input">
+            <button class="btn btn-primary" onclick="addCode()">Add</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Pending Codes</h3>
+            <span class="card-badge" id="pending-count">0 codes</span>
+          </div>
+          <div class="queue-list" id="queue-list">
+            <div class="empty-state">Queue is empty — run a Reddit check to find codes</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results Section -->
+      <section id="section-results" class="section">
+        <div class="section-header">
+          <h1>Results</h1>
+          <div class="filter-row">
+            <button class="filter-btn active" onclick="filterResults('all')">All</button>
+            <button class="filter-btn" onclick="filterResults('success')">Success</button>
+            <button class="filter-btn" onclick="filterResults('rejected')">Rejected</button>
+            <button class="filter-btn" onclick="filterResults('ratelimited')">Rate Limited</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <table class="results-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Result</th>
+                <th>Details</th>
+                <th>When</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody">
+              <tr><td colspan="4" class="empty-state">No results yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Log Section -->
+      <section id="section-log" class="section">
+        <div class="section-header">
+          <h1>Activity Log</h1>
+        </div>
+
+        <div class="card">
+          <div class="log-container" id="log-container">
+            <div class="empty-state">Loading log...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings Section -->
+      <section id="section-settings" class="section">
+        <div class="section-header">
+          <h1>Settings</h1>
+        </div>
+
+        <!-- Login card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>Postmates Login</h3>
+            <span class="card-badge" id="login-status-badge">Checking...</span>
+          </div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Chrome Session</div>
+              <div class="settings-desc" id="login-status-desc">Checking for saved session...</div>
+            </div>
+            <button class="btn btn-primary" id="btn-setup" onclick="triggerSetup()">
+              🔐 Log in to Postmates
+            </button>
+          </div>
+        </div>
+
+        <!-- Setup steps (reused from overview) -->
+        <div id="settings-setup-checklist" style="margin-bottom:16px;display:none">
+          <div class="setup-steps" id="settings-setup-steps"></div>
+        </div>
+
+        <!-- Reddit threads card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>Reddit Threads</h3>
+            <span class="card-badge" id="thread-month-badge">Loading...</span>
+          </div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label" id="thread-id-label">No thread detected</div>
+              <div class="settings-desc">r/postmates · monthly promo code thread</div>
+            </div>
+            <a id="thread-link" href="#" target="_blank" class="btn btn-secondary" style="text-decoration:none;display:none">
+              Open ↗
+            </a>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label" id="ue-thread-id-label">No thread detected</div>
+              <div class="settings-desc">r/UberEATS · monthly promo code thread</div>
+            </div>
+            <a id="ue-thread-link" href="#" target="_blank" class="btn btn-secondary" style="text-decoration:none;display:none">
+              Open ↗
+            </a>
+          </div>
+        </div>
+
+        <!-- Scan interval card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>Scan Schedule</h3>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Reddit Scan Interval</div>
+              <div class="settings-desc">How often to check Reddit for new promo codes</div>
+            </div>
+            <div class="settings-control">
+              <select class="settings-select" id="scan-interval" onchange="saveScanInterval()">
+                <option value="0.5">Every 30 minutes</option>
+                <option value="1">Every 1 hour</option>
+                <option value="2" selected>Every 2 hours</option>
+                <option value="3">Every 3 hours</option>
+                <option value="4">Every 4 hours</option>
+                <option value="6">Every 6 hours</option>
+                <option value="12">Every 12 hours</option>
+                <option value="24">Once a day</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Code Apply Interval</div>
+              <div class="settings-desc">How often to attempt applying queued codes to Postmates</div>
+            </div>
+            <div class="settings-control">
+              <select class="settings-select" id="apply-interval" onchange="saveApplyInterval()">
+                <option value="1">Every 1 hour</option>
+                <option value="2">Every 2 hours</option>
+                <option value="3">Every 3 hours</option>
+                <option value="4" selected>Every 4 hours</option>
+                <option value="6">Every 6 hours</option>
+                <option value="12">Every 12 hours</option>
+                <option value="24">Once a day</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-footer" id="next-runs">
+            <span id="next-scan-label">Next scan: calculating...</span>
+          </div>
+        </div>
+
+        <!-- Info card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>How It Works</h3>
+          </div>
+          <div class="how-it-works">
+            <div class="how-step">
+              <span class="how-num">1</span>
+              <div><strong>Reddit Scan</strong> — Checks r/postmates for the monthly promo code thread using RSS. Extracts codes from comments and adds new ones to the queue.</div>
+            </div>
+            <div class="how-step">
+              <span class="how-num">2</span>
+              <div><strong>Code Applier</strong> — Navigates to Postmates in a background Chrome window, types each code, and records the result. Max 5 codes per run with 2-minute gaps to avoid rate limiting.</div>
+            </div>
+            <div class="how-step">
+              <span class="how-num">3</span>
+              <div><strong>Monthly Reset</strong> — When a new thread is detected (each month), the queue and results automatically archive and reset for the new month.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
