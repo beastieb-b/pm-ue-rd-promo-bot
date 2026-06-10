@@ -26,18 +26,7 @@ function setSessionValid(v) {
 }
 
 async function getBrowserContext(headless = true) {
-  if (_context) {
-    try {
-      const pages = await _context.pages();
-      // Also verify the browser process is still alive by checking page count
-      if (pages !== undefined) return _context;
-      throw new Error('dead context');
-    } catch {
-      // Context is stale — close it and start fresh
-      try { await _context.close(); } catch {}
-      _context = null;
-    }
-  }
+  if (_context) return _context;
 
   _context = await chromium.launchPersistentContext(cfg.BROWSER_PROFILE_DIR, {
     channel: 'chrome',
@@ -52,6 +41,23 @@ async function getBrowserContext(headless = true) {
   });
 
   return _context;
+}
+
+// Open a new page, surviving a dead cached context. context.pages() reads
+// Playwright's local state and never detects that Chrome actually quit —
+// newPage() is the only honest liveness check, so we try it and relaunch
+// the browser once if the cached context turns out to be closed.
+async function getPage(headless = false) {
+  const ctx = await getBrowserContext(headless);
+  try {
+    return await ctx.newPage();
+  } catch (err) {
+    if (!/closed/i.test(err.message)) throw err;
+    try { await _context.close(); } catch {}
+    _context = null;
+    const fresh = await getBrowserContext(headless);
+    return await fresh.newPage();
+  }
 }
 
 async function closeBrowser() {
@@ -71,12 +77,11 @@ async function setupLogin() {
   console.log('   Please log in, then close the browser window when done.\n');
 
   try {
-    const ctx = await getBrowserContext(false); // headed
-    const page = await ctx.newPage();
+    const page = await getPage(false); // headed
     await page.goto('https://postmates.com', { waitUntil: 'domcontentloaded' });
 
     // Wait until user closes the browser
-    await new Promise(resolve => ctx.on('close', resolve));
+    await new Promise(resolve => page.context().on('close', resolve));
     _context = null;
     setSessionValid(null); // reset — will be confirmed on next apply run
     console.log('\n✅ Browser closed — login session saved.\n');
@@ -87,15 +92,29 @@ async function setupLogin() {
 
 // ── Result detection from page content ──────────────────────────────────────
 
-function extractRejectionReason(bodyText) {
-  if (bodyText.includes('expired')) return 'Code expired';
-  if (bodyText.includes('not eligible')) return 'Not eligible for your account';
-  if (bodyText.includes('not valid') || bodyText.includes('promotion code is not')) return 'Code not valid';
-  if (bodyText.includes('already been used') || bodyText.includes('already used')) return 'Already used';
-  if (bodyText.includes('invalid')) return 'Invalid code';
-  if (bodyText.includes('oops')) return 'Error applying code';
-  if (bodyText.includes('error') && !bodyText.includes('delivery')) return 'Error applying code';
+// Each rejection signal: the phrase Postmates shows → the human-readable reason.
+// Order matters — more specific phrases first.
+const REJECTION_SIGNALS = [
+  ['promotion code is not valid', 'Code not valid'],
+  ['not valid', 'Code not valid'],
+  ['not eligible', 'Not eligible for your account'],
+  ['already been used', 'Already used'],
+  ['already used', 'Already used'],
+  ['expired', 'Code expired'],
+  ['invalid', 'Invalid code'],
+  ['oops', 'Error applying code'],
+];
+
+// Returns { phrase, reason } for the first rejection phrase found, or null.
+function findRejection(text) {
+  for (const [phrase, reason] of REJECTION_SIGNALS) {
+    if (text.includes(phrase)) return { phrase, reason };
+  }
   return null;
+}
+
+function extractRejectionReason(bodyText) {
+  return findRejection(bodyText)?.reason || null;
 }
 
 async function getResultText(page) {
@@ -108,71 +127,77 @@ async function getResultText(page) {
   });
 }
 
-async function detectResult(page) {
-  await page.waitForTimeout(3000);
+function extractSavings(text) {
+  const m =
+    text.match(/enjoy\s+(\$\d+(?:\.\d+)?)\s+off/i) ||
+    text.match(/enjoy\s+(\d+%)\s+off/i) ||
+    text.match(/(\$\d+(?:\.\d+)?)\s+off\s+your/i) ||
+    text.match(/save\s+(\$\d+(?:\.\d+)?)/i) ||
+    text.match(/(\$\d+(?:\.\d+)?)\s+off/i) ||
+    text.match(/(\d+%\s+off)/i);
+  return m ? m[1].trim() : null;
+}
 
-  const bodyText = await getResultText(page);
-
-  // Rate limit signals
-  if (
-    bodyText.includes('too many') ||
-    bodyText.includes('rate limit') ||
-    bodyText.includes('toomany') ||
-    bodyText.includes('too many requests')
-  ) {
+// Classify the modal/page state. `before` is the modal text captured before
+// clicking Apply — we compare against it so the always-present default promos
+// ("$20 off", "10% off") don't register as a fresh success.
+function classify(text, before) {
+  // Rate limit — highest priority, stops the whole run
+  if (/too\s*many|rate limit|too many requests|slow down/.test(text)) {
     return { result: 'ratelimited', detail: 'Rate limit detected' };
   }
 
-  // Success: promo applied — require specific combination to avoid false positives
-  // ("enjoy" alone appears in footers/banners; must be paired with a dollar amount or specific phrases)
-  const successSignal =
-    bodyText.includes('see eligible stores') ||
-    bodyText.includes('promo applied') ||
-    bodyText.includes('added to your account') ||
-    /enjoy\s+\$\d+\s+off/.test(bodyText) ||
-    /enjoy.*\d+%\s+off/.test(bodyText);
-  if (successSignal) {
-    // Extract the savings amount in whatever format Postmates shows it
-    const savingsMatch =
-      bodyText.match(/enjoy\s+(\$\d+(?:\.\d+)?)\s+off/i) ||   // "Enjoy $20 off"
-      bodyText.match(/enjoy\s+(\d+%)\s+off/i) ||               // "Enjoy 10% off"
-      bodyText.match(/(\$\d+(?:\.\d+)?)\s+off\s+your/i) ||     // "$20 off your order"
-      bodyText.match(/save\s+(\$\d+(?:\.\d+)?)/i) ||           // "Save $20"
-      bodyText.match(/(\d+%\s+off)/i);                          // "10% off"
-    const savings = savingsMatch
-      ? savingsMatch[1].trim().replace(/^\w/, c => c.toUpperCase())
-      : null;
+  // Rejection — only trust a phrase that was NOT already in the modal before
+  // applying (the modal lists existing promos whose text could contain words
+  // like "expired"). Comparing the trigger phrase, not the label, avoids that.
+  const rejection = findRejection(text);
+  if (rejection && !before.includes(rejection.phrase)) {
+    return { result: 'rejected', detail: rejection.reason };
+  }
+  // Generic rejection phrasing that the helper may not cover
+  if (/couldn'?t (be )?appl|not be applied|unable to|isn'?t valid|doesn'?t exist|no longer valid/.test(text)) {
+    return { result: 'rejected', detail: 'Code not valid' };
+  }
+
+  // Success — a confirmation interstitial appears with these phrases.
+  // "see eligible stores"/"promo applied" are unambiguous success markers.
+  const strongSuccess =
+    text.includes('see eligible stores') ||
+    text.includes('promo applied') ||
+    text.includes('added to your account') ||
+    text.includes('successfully applied') ||
+    /you'?ll (get|enjoy|save)/.test(text);
+  if (strongSuccess) {
+    const savings = extractSavings(text);
     return { result: 'success', detail: savings ? `${savings} off` : 'Applied!' };
   }
 
-  // Rejection signals — extract specific reason
-  const reason1 = extractRejectionReason(bodyText);
-  if (reason1) return { result: 'rejected', detail: reason1 };
+  return null; // undetermined
+}
 
-  // If no signal yet, wait and check again — run the full success check, not a subset
-  await page.waitForTimeout(3000);
-  const bodyText2 = await getResultText(page);
-  const reason2 = extractRejectionReason(bodyText2);
-  if (reason2) return { result: 'rejected', detail: reason2 };
-  const successSignal2 =
-    bodyText2.includes('see eligible stores') ||
-    bodyText2.includes('promo applied') ||
-    bodyText2.includes('added to your account') ||
-    /enjoy\s+\$\d+(?:\.\d+)?\s+off/.test(bodyText2) ||
-    /enjoy.*\d+%\s+off/.test(bodyText2);
-  if (successSignal2) {
-    const savingsMatch2 =
-      bodyText2.match(/enjoy\s+(\$\d+(?:\.\d+)?)\s+off/i) ||
-      bodyText2.match(/enjoy\s+(\d+%)\s+off/i) ||
-      bodyText2.match(/(\$\d+(?:\.\d+)?)\s+off\s+your/i) ||
-      bodyText2.match(/save\s+(\$\d+(?:\.\d+)?)/i) ||
-      bodyText2.match(/(\d+%\s+off)/i);
-    const savings2 = savingsMatch2 ? savingsMatch2[1].trim().replace(/^\w/, c => c.toUpperCase()) : null;
-    return { result: 'success', detail: savings2 ? `${savings2} off` : 'Applied!' };
+async function detectResult(page, beforeText = '') {
+  const before = (beforeText || '').toLowerCase();
+
+  // Poll for up to ~12s — the response can take a few seconds to render
+  for (let i = 0; i < 6; i++) {
+    await page.waitForTimeout(2000);
+    const text = await getResultText(page);
+    const verdict = classify(text, before);
+    if (verdict) return verdict;
+
+    // If the modal CLOSED entirely after applying, that's a success signal on
+    // Postmates (the modal dismisses and shows the applied promo on the feed).
+    const modalStillOpen = await page
+      .locator('[role="dialog"]:has(input), [aria-modal="true"]:has(input)')
+      .first().isVisible({ timeout: 500 }).catch(() => false);
+    if (!modalStillOpen) {
+      const text2 = await getResultText(page);
+      const savings = extractSavings(text2);
+      return { result: 'success', detail: savings ? `${savings} off` : 'Applied!' };
+    }
   }
 
-  // Save a screenshot for debugging — helps identify what Postmates shows when
-  // detection strings don't match the current UI.
+  // Still undetermined — screenshot for debugging
   try {
     const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
     fs.mkdirSync(debugDir, { recursive: true });
@@ -201,15 +226,14 @@ async function dismissPopups(page) {
 }
 
 async function applyCode(page, code) {
-  // Navigate to promo modal URL
+  // Navigate to promo modal URL.
+  // First load often redirects to mod=messagingInterstitial ("what's new" popup)
+  // instead of the promos modal, so we load, dismiss, then load again.
   await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
-
-  // Dismiss any blocking popups before interacting
   await dismissPopups(page);
 
   // Check if we got redirected away from Postmates entirely (not logged in)
-  // Allow any postmates.com page — only flag if we left the domain or hit /login
   const url = page.url();
   const onPostmates = url.includes('postmates.com') && !url.includes('/login') && !url.includes('/signin');
   if (!onPostmates) {
@@ -218,11 +242,21 @@ async function applyCode(page, code) {
   }
   setSessionValid(true);
 
-  // Wait up to 8s for the promo modal to appear — the URL params trigger it
-  // lazily in React, so it often renders after the initial page load.
   // Scope to dialogs that contain an input so we never grab a cookie banner or
   // address confirmation modal that happens to appear at the same time.
-  const modalLocator = page.locator('[role="dialog"]:has(input), [aria-modal="true"]:has(input)').first();
+  const modalSelector = '[role="dialog"]:has(input), [aria-modal="true"]:has(input)';
+  let modalLocator = page.locator(modalSelector).first();
+  let modalOpen = await modalLocator.isVisible({ timeout: 6000 }).catch(() => false);
+
+  // If the interstitial hijacked the first load, navigate again — the promo
+  // modal reliably appears on the second visit.
+  if (!modalOpen) {
+    await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(2500);
+    await dismissPopups(page);
+    modalLocator = page.locator(modalSelector).first();
+  }
+
   try {
     await modalLocator.waitFor({ state: 'visible', timeout: 8000 });
   } catch {
@@ -301,6 +335,11 @@ async function applyCode(page, code) {
     }
   }
 
+  // Snapshot the modal text BEFORE applying. The promo modal always shows the
+  // default "$20 off" / "10% off" promos, so we can only trust text that appears
+  // AFTER clicking Apply. detectResult() diffs against this baseline.
+  const beforeText = await getResultText(page);
+
   // Find and click the Apply button using Playwright's locator API
   // waitForSelector with :has-text() is unreliable in Playwright 1.40+ — use locators instead
   let clicked = false;
@@ -332,7 +371,7 @@ async function applyCode(page, code) {
     await inputLocator.press('Enter');
   }
 
-  return await detectResult(page);
+  return await detectResult(page, beforeText);
 }
 
 // ── Main apply run ───────────────────────────────────────────────────────────
@@ -357,8 +396,7 @@ async function runApplyCodes(options = {}) {
     }
 
     // Must run headed — Postmates detects and blocks headless Chrome
-    const ctx = await getBrowserContext(false);
-    page = await ctx.newPage();
+    page = await getPage(false);
     const results = [];
     let rateLimited = false;
 
@@ -420,7 +458,16 @@ async function runApplyCodes(options = {}) {
       rateLimited,
     });
 
-    return { applied: results.length, results, rateLimited };
+    // Health check: if every attempt this run came back unknown/error, the
+    // Postmates UI has probably changed and detection is broken. Alert loudly
+    // instead of failing silently for days.
+    const broken = results.length >= 2 && results.every(r => ['unknown', 'error'].includes(r.result));
+    if (broken) {
+      state.appendLog({ type: 'detection_health_warning', runs: results.length });
+      state.setHealthWarning('All codes returned unknown/error on the last run — the Postmates UI may have changed. Run the self-test in Settings → System Health.');
+    }
+
+    return { applied: results.length, results, rateLimited, detectionWarning: broken };
   } catch (err) {
     state.appendLog({ type: 'apply_run_error', error: err.message });
     return { error: `Apply run failed: ${err.message}` };
@@ -432,4 +479,44 @@ async function runApplyCodes(options = {}) {
   }
 }
 
-module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid };
+// ── Self-test ────────────────────────────────────────────────────────────────
+// End-to-end pipeline check: applies a deliberately fake code through the real
+// applyCode() path. A healthy system returns "rejected" (Postmates says the
+// code is not valid). Anything else means navigation, input, or detection broke.
+
+async function testDetection() {
+  if (_setupRunning) return { ok: false, error: 'Login setup is running' };
+  if (_applyRunning) return { ok: false, error: 'Apply run in progress — try again after it finishes' };
+  _applyRunning = true;
+
+  const fakeCode = 'SELFTEST' + Math.floor(1000 + Math.random() * 9000);
+  let page = null;
+  try {
+    page = await getPage(false);
+    const verdict = await applyCode(page, fakeCode);
+
+    const ok = verdict.result === 'rejected';
+    state.appendLog({ type: 'self_test', code: fakeCode, result: verdict.result, ok });
+    if (ok) {
+      state.clearHealthWarning(); // pipeline proven healthy — retire the banner
+    } else {
+      state.setHealthWarning(`Self-test failed: expected "rejected" but got "${verdict.result}". The Postmates UI may have changed.`);
+    }
+    return {
+      ok,
+      result: verdict.result,
+      detail: verdict.detail,
+      message: ok
+        ? 'Detection pipeline healthy — fake code was correctly rejected.'
+        : `Expected "rejected" but got "${verdict.result}" — the Postmates UI may have changed.`,
+    };
+  } catch (err) {
+    state.appendLog({ type: 'self_test', code: fakeCode, result: 'crash', ok: false, error: err.message });
+    return { ok: false, error: err.message };
+  } finally {
+    if (page) { try { await page.close(); } catch {} }
+    _applyRunning = false;
+  }
+}
+
+module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid, testDetection };

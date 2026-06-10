@@ -58,6 +58,16 @@
     <!-- Main content -->
     <main class="main">
 
+      <!-- Health warning banner (set when detection looks broken) -->
+      <div class="health-banner" id="health-banner" style="display:none">
+        <span class="health-banner-icon">⚠️</span>
+        <div class="health-banner-text">
+          <strong>Something looks wrong</strong>
+          <span id="health-banner-msg"></span>
+        </div>
+        <button class="health-banner-dismiss" onclick="dismissHealthWarning()" title="Dismiss">×</button>
+      </div>
+
       <!-- Setup Checklist (auto-hides when all required steps done) -->
       <div id="setup-checklist" style="display:none">
         <div class="setup-header">
@@ -263,6 +273,23 @@
             <a id="ue-thread-link" href="#" target="_blank" class="btn btn-secondary" style="text-decoration:none;display:none">
               Open ↗
             </a>
+          </div>
+        </div>
+
+        <!-- Health check card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>System Health</h3>
+            <span class="card-badge" id="selftest-badge" style="display:none"></span>
+          </div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Test Detection Pipeline</div>
+              <div class="settings-desc" id="selftest-desc">Applies a fake promo code through the real automation and verifies Postmates rejects it. Run this if results look wrong.</div>
+            </div>
+            <button class="btn btn-secondary" id="btn-selftest" onclick="runSelfTest()">
+              🧪 Run Test
+            </button>
           </div>
         </div>
 
