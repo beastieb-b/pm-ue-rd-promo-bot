@@ -66,6 +66,7 @@ async function loadStats() {
     renderOverview();
     renderScanStatus();
     renderSetupChecklist();
+    renderHealthWarning();
     // Always refresh Settings thread rows if that section is visible
     if (document.getElementById('section-settings')?.classList.contains('active')) {
       renderSettings();
@@ -207,6 +208,24 @@ function formatDuration(ms) {
   const h = Math.floor(m / 60);
   const rem = m % 60;
   return rem > 0 ? `${h}h ${rem}m` : `${h}h`;
+}
+
+function renderHealthWarning() {
+  const banner = document.getElementById('health-banner');
+  const msg = document.getElementById('health-banner-msg');
+  if (!banner) return;
+  const w = stats.healthWarning;
+  if (w && w.message) {
+    msg.textContent = `${w.message} (${timeAgo(new Date(w.ts))})`;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+async function dismissHealthWarning() {
+  document.getElementById('health-banner').style.display = 'none';
+  try { await fetch('/api/health-warning', { method: 'DELETE' }); } catch {}
 }
 
 function renderSetupChecklist() {
@@ -601,6 +620,16 @@ function handleSSE(data) {
       loadStats();
       break;
 
+    case 'self_test_done':
+      handleSelfTestDone(data);
+      loadStats(); // refresh banner state (set on fail, cleared on pass)
+      break;
+
+    case 'health_warning_cleared':
+      stats.healthWarning = null;
+      renderHealthWarning();
+      break;
+
     case 'setup_done':
       stats.loggedIn = data.loggedIn;
       renderSettings();
@@ -746,6 +775,42 @@ async function quitApp() {
   } catch {
     showToast('Already stopped or unreachable');
   }
+}
+
+async function runSelfTest() {
+  const btn = document.getElementById('btn-selftest');
+  const badge = document.getElementById('selftest-badge');
+  const desc = document.getElementById('selftest-desc');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Testing...'; }
+  if (badge) { badge.style.display = ''; badge.textContent = 'Running...'; badge.style.background = 'var(--blue-fill)'; badge.style.color = 'var(--blue)'; }
+  if (desc) desc.textContent = 'Opening Chrome and applying a fake code — takes about 30 seconds...';
+  try {
+    await fetch('/api/self-test', { method: 'POST' });
+  } catch {
+    showToast('Failed to start self-test', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '🧪 Run Test'; }
+  }
+}
+
+function handleSelfTestDone(data) {
+  const btn = document.getElementById('btn-selftest');
+  const badge = document.getElementById('selftest-badge');
+  const desc = document.getElementById('selftest-desc');
+  if (btn) { btn.disabled = false; btn.textContent = '🧪 Run Test'; }
+  if (badge) {
+    badge.style.display = '';
+    if (data.ok) {
+      badge.textContent = '✓ Healthy';
+      badge.style.background = 'var(--green-fill)';
+      badge.style.color = 'var(--green)';
+    } else {
+      badge.textContent = '⚠ Problem';
+      badge.style.background = 'var(--red-fill)';
+      badge.style.color = 'var(--red)';
+    }
+  }
+  if (desc) desc.textContent = data.message || data.error || 'Test finished.';
+  showToast(data.ok ? 'Self-test passed — detection pipeline healthy ✅' : `Self-test failed: ${data.message || data.error}`, data.ok ? 'success' : 'error');
 }
 
 async function triggerSetup() {

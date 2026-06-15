@@ -290,6 +290,23 @@ function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
   appendLog({ type: 'ue_monthly_reset', old_thread: oldThreadId, new_thread: newThreadId, month: newMonth });
 }
 
+// ── Health warning (shown as a banner in the dashboard) ─────────────────────
+
+const HEALTH_FILE = path.join(cfg.DATA_DIR, 'health.json');
+
+function setHealthWarning(message) {
+  fs.writeFileSync(HEALTH_FILE, JSON.stringify({ message, ts: new Date().toISOString() }));
+}
+
+function getHealthWarning() {
+  if (!fs.existsSync(HEALTH_FILE)) return null;
+  try { return JSON.parse(fs.readFileSync(HEALTH_FILE, 'utf8')); } catch { return null; }
+}
+
+function clearHealthWarning() {
+  try { fs.unlinkSync(HEALTH_FILE); } catch {}
+}
+
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 function getStats() {
@@ -336,5 +353,6 @@ module.exports = {
   getUETriedState, saveUETriedState,
   ueMonthlyReset,
   appendLog, getLog,
+  setHealthWarning, getHealthWarning, clearHealthWarning,
   getStats,
 };

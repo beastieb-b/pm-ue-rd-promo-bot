@@ -83,7 +83,14 @@ app.get('/api/stats', (req, res) => {
     settings: settings.load(),
     setup,
     scanStatus: _getScanStatusFn ? _getScanStatusFn() : null,
+    healthWarning: state.getHealthWarning(),
   });
+});
+
+app.delete('/api/health-warning', (req, res) => {
+  state.clearHealthWarning();
+  broadcast({ type: 'health_warning_cleared' });
+  res.json({ cleared: true });
 });
 
 app.get('/api/log', (req, res) => {
@@ -173,6 +180,18 @@ app.post('/api/restart', (req, res) => {
       process.exit(0); // launcher script / npm start will handle restart
     }
   }, 300);
+});
+
+app.post('/api/self-test', async (req, res) => {
+  const postmates = require('./postmates');
+  res.json({ started: true });
+  try {
+    broadcast({ type: 'self_test_progress', step: 'running' });
+    const result = await postmates.testDetection();
+    broadcast({ type: 'self_test_done', ...result });
+  } catch (err) {
+    broadcast({ type: 'self_test_done', ok: false, error: err.message });
+  }
 });
 
 app.post('/api/setup', async (req, res) => {
