@@ -307,6 +307,44 @@ function clearHealthWarning() {
   try { fs.unlinkSync(HEALTH_FILE); } catch {}
 }
 
+// ── Savings ──────────────────────────────────────────────────────────────────
+
+// Pull a dollar amount out of a result detail like "$20 off" or "Save $15".
+// Percentage promos ("10% off") have no fixed dollar value, so they count as 0.
+function parseSavings(detail) {
+  if (!detail) return 0;
+  const m = String(detail).match(/\$\s*(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+// Total fixed-dollar savings across a list of success results.
+function sumSavings(successes) {
+  return successes.reduce((acc, r) => acc + parseSavings(r.detail), 0);
+}
+
+// Savings from the most recently archived processed file (previous month),
+// so the dashboard can show a month-over-month delta. Returns null if none.
+function getLastMonthSavings() {
+  try {
+    if (!fs.existsSync(cfg.ARCHIVE_DIR)) return null;
+    const files = fs.readdirSync(cfg.ARCHIVE_DIR)
+      .filter(f => f.endsWith('-processed.txt'))
+      .sort();
+    if (!files.length) return null;
+    const latest = path.join(cfg.ARCHIVE_DIR, files[files.length - 1]);
+    const lines = fs.readFileSync(latest, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
+    let total = 0;
+    for (const line of lines) {
+      if (!line.includes('\t')) continue;
+      const [, result, detail] = line.split('\t');
+      if (result === 'success') total += parseSavings(detail);
+    }
+    return total;
+  } catch {
+    return null;
+  }
+}
+
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 function getStats() {
@@ -317,6 +355,9 @@ function getStats() {
   const successes = processed.filter(r => r.result === 'success');
   const rejected = processed.filter(r => r.result === 'rejected');
   const rateLimited = processed.filter(r => r.result === 'ratelimited');
+
+  const savedThisMonth = sumSavings(successes);
+  const savedLastMonth = getLastMonthSavings();
 
   return {
     threadId: getThreadId(),
@@ -329,7 +370,10 @@ function getStats() {
     rejectedCount: rejected.length,
     rateLimitedCount: rateLimited.length,
     successRate: processed.length ? Math.round(successes.length / processed.length * 100) : 0,
+    savedThisMonth,
+    savedLastMonth,
     successCodes: successes.map(r => r.code),
+    successList: successes.map(r => ({ code: r.code, detail: r.detail })),
     recentResults: processed.slice(-20).reverse(),
     queue: queue.slice(0, 30),
     monitoredSources: Object.entries(catalog.sources)

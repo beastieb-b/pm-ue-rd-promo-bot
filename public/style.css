@@ -493,7 +493,7 @@ body {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -505,6 +505,10 @@ body {
   padding: 16px 18px 14px;
 }
 
+/* Savings hero — accented so the money reads as the headline number */
+.stat-saved { border-color: rgba(48, 209, 88, 0.3); }
+.stat-saved .stat-value { color: var(--green); font-size: 40px; letter-spacing: -2px; }
+
 .stat-value {
   font-size: 34px;
   font-weight: 700;
@@ -515,11 +519,14 @@ body {
 
 .stat-success .stat-value  { color: var(--green); }
 .stat-queue .stat-value    { color: var(--blue); }
-.stat-tried .stat-value    { color: var(--orange); }
-.stat-rate .stat-value     { color: var(--teal); }
+.stat-tried .stat-value    { color: var(--label-2); }
 
 .stat-label { font-size: 13px; font-weight: 600; color: var(--label); }
 .stat-sublabel { font-size: 12px; color: var(--label-3); margin-top: 1px; }
+
+.delta-up   { color: var(--green); font-weight: 600; }
+.delta-down { color: var(--label-3); font-weight: 600; }
+.delta-flat { color: var(--label-3); }
 
 /* ── Cards ───────────────────────────────────────────────────────────────── */
 
@@ -570,21 +577,37 @@ body {
 
 /* ── Success chips ───────────────────────────────────────────────────────── */
 
-.success-list { padding: 10px 12px 4px; }
+.success-list { padding: 10px 12px 4px; display: flex; flex-wrap: wrap; gap: 8px; }
 
 .success-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   background: var(--green-fill);
-  color: var(--green);
   border: 1px solid rgba(48, 209, 88, 0.25);
-  padding: 4px 11px;
-  border-radius: 20px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t);
+}
+
+.success-chip:hover { background: rgba(48, 209, 88, 0.22); border-color: rgba(48, 209, 88, 0.4); }
+.success-chip:active { filter: brightness(0.92); }
+
+.success-chip-code {
+  font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 12px;
   font-weight: 600;
-  margin: 3px;
+  color: var(--label);
   letter-spacing: 0.3px;
+}
+
+.success-chip-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--green);
+  letter-spacing: -0.3px;
 }
 
 /* ── Activity feed ───────────────────────────────────────────────────────── */
@@ -769,6 +792,25 @@ body {
   color: var(--blue);
   letter-spacing: 0.3px;
 }
+
+/* Code values that copy to clipboard on click — look like text, not buttons */
+.copyable {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--t);
+}
+
+.copyable:hover { background: var(--blue-fill); }
+.copyable:active { filter: brightness(0.9); }
+
+.queue-code.copyable { color: var(--blue); }
+.result-code-value.copyable { color: var(--label); }
 
 .queue-meta,
 .source-meta-row {
@@ -1205,10 +1247,21 @@ body {
   .cards-row  { grid-template-columns: 1fr; }
   .log-entry  { grid-template-columns: 140px 1fr; }
   .log-detail { display: none; }
+
+  /* Results table: drop the lower-priority Source + Details columns so the
+     essentials (code, result, when) stay readable without horizontal scroll */
+  .results-table th:nth-child(2),
+  .results-table td:nth-child(2),
+  .results-table th:nth-child(4),
+  .results-table td:nth-child(4) { display: none; }
 }
 
 @media (max-width: 640px) {
   :root { --sidebar-w: 190px; }
   .main { padding: 18px 16px 24px; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stat-saved { grid-column: 1 / -1; }
+  .section-header { flex-direction: column; align-items: flex-start; }
+  .add-code-form { width: 100%; }
+  .add-code-form .code-input { flex: 1; width: auto; }
 }

@@ -105,7 +105,24 @@ function renderOverview() {
   setText('stat-success', stats.successCount ?? 0);
   setText('stat-queue', stats.queueCount ?? 0);
   setText('stat-tried', stats.totalTried ?? 0);
-  setText('stat-rate', stats.totalTried ? `${stats.successRate}%` : '—');
+
+  // Savings hero — total fixed-dollar value of codes applied this month,
+  // with a delta vs the previous month when archive data exists.
+  const saved = stats.savedThisMonth ?? 0;
+  setText('stat-saved', formatMoney(saved));
+  const sub = document.getElementById('stat-saved-sub');
+  if (sub) {
+    const n = stats.successCount ?? 0;
+    let text = n ? `across ${n} code${n !== 1 ? 's' : ''}` : 'no codes yet';
+    const last = stats.savedLastMonth;
+    if (typeof last === 'number' && (saved || last)) {
+      const delta = saved - last;
+      const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '·';
+      const cls = delta > 0 ? 'delta-up' : delta < 0 ? 'delta-down' : 'delta-flat';
+      text += ` · <span class="${cls}">${arrow} ${formatMoney(Math.abs(delta))} vs last month</span>`;
+    }
+    sub.innerHTML = text;
+  }
 
   const badge = document.getElementById('queue-badge');
   if (badge) {
@@ -122,11 +139,19 @@ function renderOverview() {
 
   const successEl = document.getElementById('success-list');
   const count = document.getElementById('success-count');
-  if (stats.successCodes && stats.successCodes.length) {
-    count.textContent = stats.successCodes.length;
-    successEl.innerHTML = stats.successCodes
-      .map(code => `<span class="success-chip">✅ ${escapeHtml(code)}</span>`)
-      .join('');
+  // Prefer the richer successList (code + detail); fall back to plain codes.
+  const successItems = stats.successList && stats.successList.length
+    ? stats.successList
+    : (stats.successCodes || []).map(code => ({ code, detail: null }));
+  if (successItems.length) {
+    count.textContent = successItems.length;
+    successEl.innerHTML = successItems.map(item => {
+      const amount = chipAmount(item.detail);
+      const valuePart = amount ? `<span class="success-chip-value">${escapeHtml(amount)}</span>` : '';
+      return `<button class="success-chip" title="Click to copy ${escapeHtml(item.code)}" onclick="copyCode('${escapeHtml(item.code)}')">
+        <span class="success-chip-code">${escapeHtml(item.code)}</span>${valuePart}
+      </button>`;
+    }).join('');
   } else {
     count.textContent = '0';
     successEl.innerHTML = '<div class="empty-state">No successful codes yet this month</div>';
@@ -395,9 +420,11 @@ function renderQueue(queue) {
     const body = document.createElement('div');
     body.className = 'queue-main';
 
-    const codeEl = document.createElement('div');
-    codeEl.className = 'queue-code';
+    const codeEl = document.createElement('button');
+    codeEl.className = 'queue-code copyable';
+    codeEl.title = 'Click to copy';
     codeEl.textContent = code;
+    codeEl.addEventListener('click', () => copyCode(code));
 
     const metaRow = document.createElement('div');
     metaRow.className = 'queue-meta';
@@ -449,7 +476,7 @@ function renderResults() {
     codeCell.className = 'result-code';
     codeCell.innerHTML = `
       <div class="result-code-stack">
-        <div class="result-code-value">${escapeHtml(r.code)}</div>
+        <button class="result-code-value copyable" title="Click to copy" onclick="copyCode('${escapeHtml(r.code)}')">${escapeHtml(r.code)}</button>
         ${r.confidenceLabel ? `<div class="result-submeta">${escapeHtml(r.confidenceLabel)} confidence</div>` : ''}
       </div>
     `;
@@ -985,6 +1012,32 @@ function formatMonth(m) {
   if (!m) return '';
   const [year, month] = m.split('-');
   return new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
+// "$20" / "$12.50" — drops the ".00" on whole-dollar amounts.
+function formatMoney(n) {
+  const v = Number(n) || 0;
+  return '$' + (Number.isInteger(v) ? v : v.toFixed(2));
+}
+
+// Short value for a success chip: "$20" from "$20 off", "10%" from "10% off".
+function chipAmount(detail) {
+  if (!detail) return '';
+  const dollar = String(detail).match(/\$\s*(\d+(?:\.\d+)?)/);
+  if (dollar) return '$' + dollar[1];
+  const pct = String(detail).match(/(\d+)\s*%/);
+  if (pct) return pct[1] + '%';
+  return '';
+}
+
+// Copy a promo code to the clipboard and confirm with a toast.
+async function copyCode(code) {
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast(`Copied ${code}`, 'success');
+  } catch {
+    showToast('Copy failed — clipboard blocked', 'error');
+  }
 }
 
 function formatLogDetail(entry) {
