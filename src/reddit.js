@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const state = require('./state');
-const { extractCodes } = require('./extractor');
+const { extractCodes, extractCodesWithContext } = require('./extractor');
+const { detectRegionRestriction } = require('./region');
 
 const SOURCE_LABELS = {
   reddit_postmates: 'Reddit · Postmates',
@@ -74,6 +75,8 @@ function buildCodeEntry(code, meta) {
     statusNote: meta.statusNote || null,
     expiresAt: meta.expiresAt || null,
     region: meta.region || null,
+    regionRestricted: meta.regionRestricted || false,
+    regionNote: meta.regionNote || null,
     lastSeenAt: meta.lastSeenAt || new Date().toISOString(),
   };
 }
@@ -221,22 +224,30 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
     } catch {}
   }
 
-  const allCodes = extractCodes(comments);
+  const codeContext = extractCodesWithContext(comments);
+  const allCodes = new Set(codeContext.keys());
   const triedState = getTriedState();
   const triedSet = new Set(triedState.tried_codes);
   const newCodes = [...allCodes].filter(c => !triedSet.has(c)).sort();
   const sourceUrl = `https://www.reddit.com/r/${subreddit}/comments/${newestEntry.id}/`;
-  const entriesToQueue = newCodes.map(code => buildCodeEntry(code, {
-    sourceKey,
-    sourceUrl,
-    sourceTitle: newestEntry.title,
-    statusHint: 'Monthly thread',
-    statusNote: `${comments.length} comments scanned in the latest monthly thread`,
-    lastSeenAt: new Date().toISOString(),
-    worked: 1,
-    existingUser: true,
-    hasExpiry: false,
-  }));
+  const entriesToQueue = newCodes.map(code => {
+    // Read the comment(s) this code appeared in for a region restriction.
+    const region = detectRegionRestriction(codeContext.get(code));
+    return buildCodeEntry(code, {
+      sourceKey,
+      sourceUrl,
+      sourceTitle: newestEntry.title,
+      statusHint: 'Monthly thread',
+      statusNote: `${comments.length} comments scanned in the latest monthly thread`,
+      lastSeenAt: new Date().toISOString(),
+      worked: 1,
+      existingUser: true,
+      hasExpiry: false,
+      region: region ? region.region : null,
+      regionRestricted: region ? region.restricted : false,
+      regionNote: region ? region.note : null,
+    });
+  });
 
   triedState.thread_id = newestEntry.id;
   triedState.tried_codes = [...new Set([...triedSet, ...newCodes])];

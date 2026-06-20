@@ -637,6 +637,7 @@ body {
 .dot-ratelimited { background: var(--orange); }
 .dot-info        { background: var(--blue); }
 .dot-error       { background: var(--red); }
+.dot-region_skip { background: var(--orange); }
 
 .activity-text { flex: 1; color: var(--label); }
 .activity-time { color: var(--label-3); font-size: 11px; }
@@ -862,6 +863,12 @@ body {
   color: var(--label-2);
 }
 
+.meta-pill.region-restricted {
+  color: var(--orange);
+  border-color: rgba(255, 159, 10, 0.3);
+  background: var(--orange-fill);
+}
+
 .sources-list {
   padding: 4px 0;
 }
@@ -1035,6 +1042,7 @@ body {
 .result-badge.ratelimited { background: var(--orange-fill); color: var(--orange); }
 .result-badge.error       { background: var(--red-fill);    color: var(--red); }
 .result-badge.unknown     { background: var(--bg-3);        color: var(--label-3); }
+.result-badge.region_skip { background: var(--orange-fill); color: var(--orange); }
 
 /* ── Activity log ────────────────────────────────────────────────────────── */
 

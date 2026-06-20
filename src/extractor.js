@@ -102,6 +102,27 @@ const FILTER_WORDS = new Set([
   'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH', 'SIXTH', 'SEVENTH',
 ]);
 
+// Extract codes while keeping the comment text each code was found in, so
+// downstream consumers can read per-code context (e.g. region restrictions).
+// Returns a Map of code → joined context of every comment that mentioned it.
+function extractCodesWithContext(commentTexts) {
+  const context = new Map();
+  const add = (code, text) => {
+    const prev = context.get(code);
+    context.set(code, prev ? `${prev}\n${text}` : text);
+  };
+
+  for (const text of commentTexts) {
+    if (!text || text.length < 3) continue;
+    const cleaned = text
+      .replace(/https?:\/\/\S+/gi, ' ')
+      .replace(/<[^>]*>/g, ' ');
+    for (const code of extractCodes([cleaned])) add(code, text);
+  }
+
+  return context;
+}
+
 function extractCodes(commentTexts) {
   const codes = new Set();
 
@@ -166,4 +187,4 @@ function extractCodes(commentTexts) {
   return codes;
 }
 
-module.exports = { extractCodes };
+module.exports = { extractCodes, extractCodesWithContext };

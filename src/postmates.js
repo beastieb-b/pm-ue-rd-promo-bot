@@ -395,6 +395,13 @@ async function runApplyCodes(options = {}) {
       return { applied: 0, results: [], reason: 'No codes in queue' };
     }
 
+    // Region restrictions are read from the code catalog (populated during the
+    // Reddit scan). Codes locked to a metro other than Los Angeles are skipped
+    // so we don't burn apply attempts / rate-limit budget on codes that can't
+    // work here. They're marked with a clear reason and can be re-queued by
+    // deleting the result if the user wants to try one anyway.
+    const catalog = state.getCodeCatalog();
+
     // Must run headed — Postmates detects and blocks headless Chrome
     page = await getPage(false);
     const results = [];
@@ -402,6 +409,16 @@ async function runApplyCodes(options = {}) {
 
     for (const code of pending) {
       if (rateLimited) break;
+
+      const meta = catalog.codes[code] || {};
+      if (meta.regionRestricted) {
+        const detail = meta.regionNote || `${meta.region || 'Other region'}-only — not valid in Los Angeles`;
+        results.push({ code, result: 'region_skip', detail });
+        state.appendLog({ type: 'code_result', code, result: 'region_skip', detail });
+        state.markResult(code, 'region_skip', detail);
+        if (onProgress) onProgress({ code, status: 'region_skip', detail });
+        continue;
+      }
 
       if (onProgress) onProgress({ code, status: 'trying' });
 

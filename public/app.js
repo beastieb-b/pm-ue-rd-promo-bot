@@ -161,7 +161,7 @@ function renderOverview() {
   const recent = [...processed].reverse().slice(0, 8);
   if (recent.length) {
     feed.innerHTML = recent.map(r => {
-      const icon = r.result === 'success' ? '✅' : r.result === 'ratelimited' ? '⏳' : '❌';
+      const icon = resultIcon(r.result);
       const detail = r.detail ? `<span style="color:var(--label-3)"> · ${escapeHtml(r.detail)}</span>` : '';
       const source = r.sourceLabel ? `<span class="inline-meta-pill">${escapeHtml(r.sourceLabel)}</span>` : '';
       const when = r.ts ? `<span style="color:var(--label-3);font-size:11px;margin-left:auto;white-space:nowrap">${timeAgo(new Date(r.ts))}</span>` : '';
@@ -432,7 +432,8 @@ function renderQueue(queue) {
       meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
       meta.confidenceLabel ? `<span class="meta-pill confidence confidence-${cssToken(meta.confidenceLabel.toLowerCase())}">${escapeHtml(meta.confidenceLabel)} confidence</span>` : '',
       meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
-      meta.region ? `<span class="meta-pill">${escapeHtml(meta.region)}</span>` : '',
+      meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 ${escapeHtml(meta.region || 'Other region')} only</span>`
+        : meta.region ? `<span class="meta-pill">📍 ${escapeHtml(meta.region)}</span>` : '',
       meta.expiresAt ? `<span class="meta-pill">Expires ${escapeHtml(meta.expiresAt)}</span>` : '',
       meta.lastSeenAt ? `<span class="meta-pill">Seen ${escapeHtml(timeAgo(new Date(meta.lastSeenAt)))}</span>` : '',
     ].filter(Boolean).join('');
@@ -746,6 +747,9 @@ function appendLiveLog(data) {
   } else if (data.status === 'rejected') {
     msg = `❌ ${data.code} — rejected`;
     cls = 'error';
+  } else if (data.status === 'region_skip') {
+    msg = `📍 ${data.code} — skipped (${data.detail || 'region locked'})`;
+    cls = 'waiting';
   } else if (data.status === 'ratelimited') {
     msg = `⏳ Rate limited — stopping run`;
     cls = 'waiting';
@@ -1001,11 +1005,11 @@ function showToast(msg, type = 'info') {
 }
 
 function resultLabel(r) {
-  return { success: 'Success', rejected: 'Rejected', ratelimited: 'Rate Limited', error: 'Error', unknown: 'Unknown' }[r] || r;
+  return { success: 'Success', rejected: 'Rejected', ratelimited: 'Rate Limited', error: 'Error', unknown: 'Unknown', region_skip: 'Region Locked' }[r] || r;
 }
 
 function resultIcon(r) {
-  return { success: '✅', rejected: '❌', ratelimited: '⏳', error: '⚠️', unknown: '❓' }[r] || '•';
+  return { success: '✅', rejected: '❌', ratelimited: '⏳', error: '⚠️', unknown: '❓', region_skip: '📍' }[r] || '•';
 }
 
 function formatMonth(m) {
