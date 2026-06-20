@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
 const cron = require('node-cron');
 const cfg = require('./config');
 const state = require('./state');
@@ -176,6 +178,20 @@ server.registerTriggers(runReddit, runApply, reschedule, getScanStatus);
 
 async function main() {
   console.log('🍔 Postmates Promo Daemon starting...');
+
+  // Trim daemon-error.log to the last 1000 lines whenever it grows past 1200.
+  // launchd opens the file with O_APPEND before exec, so writes always go to
+  // the real end — trimming the content at startup is safe.
+  try {
+    const errorLog = path.join(cfg.DATA_DIR, 'daemon-error.log');
+    if (fs.existsSync(errorLog)) {
+      const lines = fs.readFileSync(errorLog, 'utf8').split('\n');
+      if (lines.length > 1200) {
+        fs.writeFileSync(errorLog, lines.slice(-1000).join('\n') + '\n');
+        console.error(`[startup] Trimmed daemon-error.log (${lines.length} → 1000 lines)`);
+      }
+    }
+  } catch {}
 
   await server.start();
 

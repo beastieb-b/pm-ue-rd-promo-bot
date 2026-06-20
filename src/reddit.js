@@ -97,39 +97,25 @@ function parseCommentSignals(text) {
 // ── Thread detection via RSS ────────────────────────────────────────────────
 
 async function detectCurrentThread() {
-  const url = 'https://www.reddit.com/r/postmates/search.rss?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
+  // Use old.reddit.com HTML search — the reddit.com search.rss endpoint can
+  // 429 for active subreddits, and old.reddit.com consistently returns 200.
+  const url = 'https://old.reddit.com/r/postmates/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
   const { status, body } = await fetchUrl(url);
-  // Reddit occasionally returns 429 but still delivers the RSS content.
-  // Fall through and parse it; only hard-fail if there's no usable body.
-  if (status !== 200 && !(status === 429 && body.includes('<entry>'))) throw new Error(`RSS returned ${status}`);
+  if (status !== 200) throw new Error(`Postmates thread search returned ${status}`);
 
+  const seen = new Set();
   const entries = [];
-  const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
+  const hrefRe = /href="(?:https?:\/\/[^"]*)?\/r\/postmates\/comments\/([a-z0-9]+)\/([^"?#]+)/g;
   let m;
-  while ((m = entryRe.exec(body)) !== null) {
-    const entry = m[1];
-    const idMatch = entry.match(/<id>t3_([a-z0-9]+)<\/id>/);
-    const titleMatch = entry.match(/<title>(.*?)<\/title>/);
-    // Use <published> (thread creation time) not <updated> (last-comment time).
-    // A still-active old thread has a recent <updated> but an old <published>,
-    // so sorting by <published> reliably picks the newest thread each month.
-    const publishedMatch = entry.match(/<published>(.*?)<\/published>/);
-    const updatedMatch = entry.match(/<updated>(.*?)<\/updated>/);
-    if (idMatch && titleMatch) {
-      const title = titleMatch[1].toLowerCase();
-      if (title.includes('monthly') && title.includes('promo')) {
-        const published = publishedMatch || updatedMatch; // fall back to updated if no published
-        entries.push({
-          id: idMatch[1],
-          title: titleMatch[1],
-          published: published ? new Date(published[1]).getTime() : 0,
-        });
-      }
-    }
+  while ((m = hrefRe.exec(body)) !== null) {
+    const [, id, slug] = m;
+    if (seen.has(id)) continue;
+    if (!slug.includes('monthly')) continue;
+    seen.add(id);
+    entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
   }
 
-  if (!entries.length) throw new Error('No matching thread found in RSS');
-  entries.sort((a, b) => b.published - a.published);
+  if (!entries.length) throw new Error('No matching thread found in search results');
   return entries.slice(0, 2);
 }
 
@@ -144,7 +130,7 @@ async function detectUberEatsThread() {
   // Results are sorted newest-first by ?sort=new, so preserve that order.
   const seen = new Set();
   const entries = [];
-  const hrefRe = /href="\/r\/UberEATS\/comments\/([a-z0-9]+)\/([^"]+)"/g;
+  const hrefRe = /href="(?:https?:\/\/[^"]*)?\/r\/UberEATS\/comments\/([a-z0-9]+)\/([^"?#]+)/g;
   let m;
   while ((m = hrefRe.exec(body)) !== null) {
     const [, id, slug] = m;
