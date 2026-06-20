@@ -65,4 +65,22 @@ function detectRegionRestriction(text) {
   return null;
 }
 
-module.exports = { detectRegionRestriction };
+const HOME_RE = new RegExp(HOME, 'i');
+
+// True when an applied promo's location belongs to the user's home market.
+function isHomeRegion(loc) {
+  return HOME_RE.test(String(loc || ''));
+}
+
+// Parse the "Location:" field Postmates shows on an applied promo's detail
+// sheet (modal text arrives lowercased). Returns the location string or null.
+// e.g. a sheet reading "Enjoy $10 Off … Location\nLas Vegas …" → "Las Vegas".
+function extractAppliedLocation(text) {
+  const m = String(text || '').match(/\blocation\b\s*[:\n]\s*([a-z][a-z .'\-]{1,40})/i);
+  if (!m) return null;
+  const loc = m[1].split('\n')[0].replace(/\s+/g, ' ').trim();
+  // Guard against catching a sentence ("location of the restaurant…").
+  return loc.length <= 40 ? loc : null;
+}
+
+module.exports = { detectRegionRestriction, isHomeRegion, extractAppliedLocation, formatRegion: titleCase };

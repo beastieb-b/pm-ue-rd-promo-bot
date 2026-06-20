@@ -4,6 +4,7 @@ const { chromium } = require('playwright');
 const cfg = require('./config');
 const state = require('./state');
 const { notifySuccess } = require('./notify');
+const { isHomeRegion, extractAppliedLocation, formatRegion } = require('./region');
 
 let _context = null;
 let _setupRunning = false;
@@ -161,14 +162,28 @@ function classify(text, before) {
 
   // Success — a confirmation interstitial appears with these phrases.
   // "see eligible stores"/"promo applied" are unambiguous success markers.
+  // The applied-promo detail sheet ("Enjoy $X Off" + an Expiration section that
+  // wasn't in the pre-apply modal) is also a success.
+  const savings = extractSavings(text);
+  const appliedSheet = !!savings && text.includes('expiration') && !before.includes('expiration');
   const strongSuccess =
     text.includes('see eligible stores') ||
     text.includes('promo applied') ||
     text.includes('added to your account') ||
     text.includes('successfully applied') ||
-    /you'?ll (get|enjoy|save)/.test(text);
+    /you'?ll (get|enjoy|save)/.test(text) ||
+    appliedSheet;
   if (strongSuccess) {
-    const savings = extractSavings(text);
+    // Postmates shows a "Location" on city-locked promos (e.g. Las Vegas).
+    // A code can apply successfully yet be useless here — treat a non-home
+    // location as region_skip so it never counts toward total saved.
+    const loc = extractAppliedLocation(text);
+    if (loc && !isHomeRegion(loc)) {
+      return {
+        result: 'region_skip',
+        detail: `${savings ? savings + ' off' : 'Applied'} — ${formatRegion(loc)} only`,
+      };
+    }
     return { result: 'success', detail: savings ? `${savings} off` : 'Applied!' };
   }
 
