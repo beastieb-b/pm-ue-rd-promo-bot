@@ -99,7 +99,9 @@ function parseCommentSignals(text) {
 async function detectCurrentThread() {
   const url = 'https://www.reddit.com/r/postmates/search.rss?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
   const { status, body } = await fetchUrl(url);
-  if (status !== 200) throw new Error(`RSS returned ${status}`);
+  // Reddit occasionally returns 429 but still delivers the RSS content.
+  // Fall through and parse it; only hard-fail if there's no usable body.
+  if (status !== 200 && !(status === 429 && body.includes('<entry>'))) throw new Error(`RSS returned ${status}`);
 
   const entries = [];
   const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
@@ -132,34 +134,28 @@ async function detectCurrentThread() {
 }
 
 async function detectUberEatsThread() {
-  const url = 'https://www.reddit.com/r/UberEATS/search.rss?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
+  // RSS search returns 429 for r/UberEATS (large subreddit, rate-limited).
+  // old.reddit.com HTML search returns 200 reliably with the same results.
+  const url = 'https://old.reddit.com/r/UberEATS/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
   const { status, body } = await fetchUrl(url);
-  if (status !== 200) throw new Error(`UberEATS RSS returned ${status}`);
+  if (status !== 200) throw new Error(`UberEATS thread search returned ${status}`);
 
+  // Extract thread IDs from hrefs like /r/UberEATS/comments/{id}/monthly_..._thread/
+  // Results are sorted newest-first by ?sort=new, so preserve that order.
+  const seen = new Set();
   const entries = [];
-  const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
+  const hrefRe = /href="\/r\/UberEATS\/comments\/([a-z0-9]+)\/([^"]+)"/g;
   let m;
-  while ((m = entryRe.exec(body)) !== null) {
-    const entry = m[1];
-    const idMatch = entry.match(/<id>t3_([a-z0-9]+)<\/id>/);
-    const titleMatch = entry.match(/<title>(.*?)<\/title>/);
-    const publishedMatch = entry.match(/<published>(.*?)<\/published>/);
-    const updatedMatch = entry.match(/<updated>(.*?)<\/updated>/);
-    if (idMatch && titleMatch) {
-      const title = titleMatch[1].toLowerCase();
-      if (title.includes('monthly') && (title.includes('promo') || title.includes('code'))) {
-        const published = publishedMatch || updatedMatch;
-        entries.push({
-          id: idMatch[1],
-          title: titleMatch[1],
-          published: published ? new Date(published[1]).getTime() : 0,
-        });
-      }
-    }
+  while ((m = hrefRe.exec(body)) !== null) {
+    const [, id, slug] = m;
+    if (seen.has(id)) continue;
+    if (!slug.includes('monthly')) continue;
+    seen.add(id);
+    // Assign synthetic published times that preserve newest-first order
+    entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
   }
 
-  if (!entries.length) throw new Error('No UberEATS thread found in RSS');
-  entries.sort((a, b) => b.published - a.published);
+  if (!entries.length) throw new Error('No UberEATS thread found in search results');
   return entries.slice(0, 2);
 }
 
