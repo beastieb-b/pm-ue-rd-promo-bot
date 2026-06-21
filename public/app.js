@@ -114,6 +114,8 @@ function renderOverview() {
   if (sub) {
     const n = stats.successCount ?? 0;
     let text = n ? `across ${n} code${n !== 1 ? 's' : ''}` : 'no codes yet';
+    const locked = stats.regionLockedCount ?? 0;
+    if (locked) text += ` · ${locked} region-locked excluded`;
     const last = stats.savedLastMonth;
     if (typeof last === 'number' && (saved || last)) {
       const delta = saved - last;
@@ -123,6 +125,8 @@ function renderOverview() {
     }
     sub.innerHTML = text;
   }
+
+  renderRegionLocked();
 
   const badge = document.getElementById('queue-badge');
   if (badge) {
@@ -176,6 +180,45 @@ function renderOverview() {
   }
 
   renderMonitoredSources(stats.monitoredSources || []);
+}
+
+// Codes that applied on Postmates but are locked to a non-SoCal area — shown
+// so the user can see they worked, while making clear they don't count.
+function renderRegionLocked() {
+  const card = document.getElementById('region-locked-card');
+  const list = document.getElementById('region-list');
+  const count = document.getElementById('region-locked-count');
+  if (!card || !list) return;
+
+  const items = stats.regionLockedList || [];
+  if (!items.length) { card.style.display = 'none'; return; }
+
+  card.style.display = '';
+  if (count) count.textContent = items.length;
+  list.innerHTML = items.map(item => {
+    const { amount, location } = parseRegionDetail(item.detail);
+    const amt = amount ? `<span class="region-chip-amt">${escapeHtml(amount)}</span>` : '';
+    const loc = location ? `<span class="region-chip-loc">📍 ${escapeHtml(location)}</span>` : '';
+    return `<button class="region-chip" title="Click to copy ${escapeHtml(item.code)}" onclick="copyCode('${escapeHtml(item.code)}')">
+      <span class="region-chip-code">${escapeHtml(item.code)}</span>${amt}${loc}
+    </button>`;
+  }).join('');
+}
+
+// Parse a region_skip detail into { amount, location }. Handles both formats:
+//   apply-time:  "$10 off — Las Vegas only"
+//   reddit hint: "LV-only — not valid in Los Angeles"
+function parseRegionDetail(detail) {
+  const d = String(detail || '');
+  const amount = chipAmount(d);
+  let location = null;
+  const a = d.match(/—\s*(.+?)\s*only\b/i);          // "… — Las Vegas only"
+  if (a) location = a[1].trim();
+  if (!location) {
+    const b = d.match(/^\s*([a-z .'-]+?)-only/i);     // "LV-only — …"
+    if (b) location = b[1].trim();
+  }
+  return { amount, location };
 }
 
 function renderScanStatus() {
@@ -497,8 +540,12 @@ function renderResults() {
 
     const detailCell = document.createElement('td');
     detailCell.className = 'result-detail';
+    const regionNote = r.result === 'region_skip'
+      ? '<div class="result-submeta region-note">✓ Applied on Postmates · not counted toward total</div>'
+      : '';
     detailCell.innerHTML = `
       <div>${escapeHtml(r.detail || '—')}</div>
+      ${regionNote}
       ${r.statusNote ? `<div class="result-submeta">${escapeHtml(r.statusNote)}</div>` : ''}
     `;
 

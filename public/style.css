@@ -610,6 +610,50 @@ body {
   letter-spacing: -0.3px;
 }
 
+/* ── Region-locked codes (worked, but not counted) ───────────────────────── */
+
+.region-locked-badge { background: var(--orange-fill); color: var(--orange); }
+
+.region-locked-note {
+  padding: 10px 16px 0;
+  font-size: 12.5px;
+  color: var(--label-2);
+  line-height: 1.5;
+}
+.region-locked-note strong { color: var(--orange); }
+
+.region-list { padding: 10px 12px 4px; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.region-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--orange-fill);
+  border: 1px solid rgba(255, 159, 10, 0.25);
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t);
+}
+.region-chip:hover { background: rgba(255, 159, 10, 0.22); border-color: rgba(255, 159, 10, 0.4); }
+.region-chip:active { filter: brightness(0.92); }
+
+.region-chip-code {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--label);
+  letter-spacing: 0.3px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 159, 10, 0.5);
+}
+
+.region-chip-amt { font-size: 13px; font-weight: 700; color: var(--label-3); letter-spacing: -0.3px; }
+.region-chip-loc { font-size: 11px; font-weight: 600; color: var(--orange); }
+
+.result-submeta.region-note { color: var(--orange); }
+
 /* ── Activity feed ───────────────────────────────────────────────────────── */
 
 .activity-feed { padding: 4px 0; max-height: 220px; overflow-y: auto; }

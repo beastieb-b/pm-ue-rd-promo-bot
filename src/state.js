@@ -355,6 +355,7 @@ function getStats() {
   const successes = processed.filter(r => r.result === 'success');
   const rejected = processed.filter(r => r.result === 'rejected');
   const rateLimited = processed.filter(r => r.result === 'ratelimited');
+  const regionLocked = processed.filter(r => r.result === 'region_skip');
 
   const savedThisMonth = sumSavings(successes);
   const savedLastMonth = getLastMonthSavings();
@@ -374,6 +375,8 @@ function getStats() {
     savedLastMonth,
     successCodes: successes.map(r => r.code),
     successList: successes.map(r => ({ code: r.code, detail: r.detail })),
+    regionLockedCount: regionLocked.length,
+    regionLockedList: regionLocked.map(r => ({ code: r.code, detail: r.detail })),
     recentResults: processed.slice(-20).reverse(),
     queue: queue.slice(0, 30),
     monitoredSources: Object.entries(catalog.sources)
