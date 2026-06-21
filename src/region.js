@@ -72,6 +72,23 @@ function isHomeRegion(loc) {
   return HOME_RE.test(String(loc || ''));
 }
 
+// Locations that are fine for an LA user: home market, California statewide, or
+// national/nationwide promos. Anything else (a specific other metro/state) is
+// not usable here.
+const USABLE_LOC_RE = /\b(los angeles|socal|so\s?cal|southern california|california|\bca\b|nationwide|national|united states|\busa?\b|everywhere|all\s+locations?|anywhere|all\s+markets?)\b/i;
+// California metros that are NOT LA — statewide language doesn't make these usable.
+const NON_HOME_CA_RE = /\b(northern california|norcal|bay area|san francisco|san diego|sacramento|\boakland\b|san jose|fresno)\b/i;
+
+// Decide whether an applied promo's location is usable for the LA user.
+// No location shown → treat as national/usable. A specific non-SoCal locality
+// (Las Vegas, Phoenix, SF, San Diego, …) → not usable.
+function isUsableLocation(loc) {
+  if (!loc) return true;
+  const s = String(loc).toLowerCase().trim();
+  if (NON_HOME_CA_RE.test(s)) return false;
+  return USABLE_LOC_RE.test(s);
+}
+
 // Parse the "Location:" field Postmates shows on an applied promo's detail
 // sheet (modal text arrives lowercased). Returns the location string or null.
 // e.g. a sheet reading "Enjoy $10 Off … Location\nLas Vegas …" → "Las Vegas".
@@ -83,4 +100,4 @@ function extractAppliedLocation(text) {
   return loc.length <= 40 ? loc : null;
 }
 
-module.exports = { detectRegionRestriction, isHomeRegion, extractAppliedLocation, formatRegion: titleCase };
+module.exports = { detectRegionRestriction, isHomeRegion, isUsableLocation, extractAppliedLocation, formatRegion: titleCase };

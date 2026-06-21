@@ -432,7 +432,7 @@ function renderQueue(queue) {
       meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
       meta.confidenceLabel ? `<span class="meta-pill confidence confidence-${cssToken(meta.confidenceLabel.toLowerCase())}">${escapeHtml(meta.confidenceLabel)} confidence</span>` : '',
       meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
-      meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 ${escapeHtml(meta.region || 'Other region')} only</span>`
+      meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 maybe ${escapeHtml(meta.region || 'other area')} — will verify</span>`
         : meta.region ? `<span class="meta-pill">📍 ${escapeHtml(meta.region)}</span>` : '',
       meta.expiresAt ? `<span class="meta-pill">Expires ${escapeHtml(meta.expiresAt)}</span>` : '',
       meta.lastSeenAt ? `<span class="meta-pill">Seen ${escapeHtml(timeAgo(new Date(meta.lastSeenAt)))}</span>` : '',

@@ -4,7 +4,7 @@ const { chromium } = require('playwright');
 const cfg = require('./config');
 const state = require('./state');
 const { notifySuccess } = require('./notify');
-const { isHomeRegion, extractAppliedLocation, formatRegion } = require('./region');
+const { isUsableLocation, extractAppliedLocation, formatRegion } = require('./region');
 
 let _context = null;
 let _setupRunning = false;
@@ -175,10 +175,11 @@ function classify(text, before) {
     appliedSheet;
   if (strongSuccess) {
     // Postmates shows a "Location" on city-locked promos (e.g. Las Vegas).
-    // A code can apply successfully yet be useless here — treat a non-home
-    // location as region_skip so it never counts toward total saved.
+    // National / California-wide / LA promos are all usable; only a specific
+    // other-area location makes a code useless here, so mark those region_skip
+    // (applied but excluded from total saved).
     const loc = extractAppliedLocation(text);
-    if (loc && !isHomeRegion(loc)) {
+    if (loc && !isUsableLocation(loc)) {
       return {
         result: 'region_skip',
         detail: `${savings ? savings + ' off' : 'Applied'} — ${formatRegion(loc)} only`,
@@ -410,12 +411,11 @@ async function runApplyCodes(options = {}) {
       return { applied: 0, results: [], reason: 'No codes in queue' };
     }
 
-    // Region restrictions are read from the code catalog (populated during the
-    // Reddit scan). Codes locked to a metro other than Los Angeles are skipped
-    // so we don't burn apply attempts / rate-limit budget on codes that can't
-    // work here. They're marked with a clear reason and can be re-queued by
-    // deleting the result if the user wants to try one anyway.
-    const catalog = state.getCodeCatalog();
+    // Every queued code is tried in Postmates — Postmates' own location field is
+    // the source of truth. A Reddit comment hint (regionRestricted) is shown in
+    // the queue but never blocks the attempt, since those reports are sometimes
+    // wrong. Codes that come back applied-but-localized to a non-SoCal area are
+    // marked region_skip during detection and excluded from total saved.
 
     // Must run headed — Postmates detects and blocks headless Chrome
     page = await getPage(false);
@@ -424,16 +424,6 @@ async function runApplyCodes(options = {}) {
 
     for (const code of pending) {
       if (rateLimited) break;
-
-      const meta = catalog.codes[code] || {};
-      if (meta.regionRestricted) {
-        const detail = meta.regionNote || `${meta.region || 'Other region'}-only — not valid in Los Angeles`;
-        results.push({ code, result: 'region_skip', detail });
-        state.appendLog({ type: 'code_result', code, result: 'region_skip', detail });
-        state.markResult(code, 'region_skip', detail);
-        if (onProgress) onProgress({ code, status: 'region_skip', detail });
-        continue;
-      }
 
       if (onProgress) onProgress({ code, status: 'trying' });
 
