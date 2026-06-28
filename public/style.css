@@ -1012,6 +1012,11 @@ body {
 }
 
 .results-table { width: 100%; border-collapse: collapse; }
+/* Keep the Source/When/Result cells on one line so rows stay a tidy height;
+   Details is allowed to wrap. */
+.results-table td:nth-child(2),
+.results-table td:nth-child(3),
+.results-table td:nth-child(5) { white-space: nowrap; }
 
 .results-table th {
   text-align: left;

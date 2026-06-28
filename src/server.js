@@ -37,7 +37,13 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.static(path.join(cfg.APP_DIR, 'public')));
+// Never cache the dashboard's own HTML/CSS/JS so UI updates always load
+// (avoids stale layouts after a deploy, incl. home-screen / PWA caching).
+app.use(express.static(path.join(cfg.APP_DIR, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (/\.(html|css|js)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-store');
+  },
+}));
 
 // SSE clients for real-time updates
 const sseClients = new Set();
