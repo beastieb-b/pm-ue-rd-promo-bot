@@ -235,6 +235,18 @@ function renderScanStatus() {
     return;
   }
 
+  // Apply run in progress takes priority — make it unmistakable, and keep it
+  // visible across page loads (this reads from the /api/stats poll too).
+  if (s.applyRunning) {
+    dot.className = 'scan-dot applying';
+    const code = s.applyCurrentCode ? ` · trying ${escapeHtml(s.applyCurrentCode)}` : '';
+    label.innerHTML = `<span class="spinner" style="vertical-align:-2px;margin-right:5px"></span>Applying codes…${code}`;
+    meta.innerHTML = s.applyStartedAt
+      ? `<span class="scan-meta-item">Started <strong>${timeAgo(new Date(s.applyStartedAt))}</strong></span>`
+      : '';
+    return;
+  }
+
   if (s.lastScanError) {
     dot.className = 'scan-dot error';
     label.textContent = 'Scan error';
@@ -663,12 +675,19 @@ function handleSSE(data) {
       finishLiveCard('reddit');
       break;
 
+    case 'apply_started':
+      if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
+      setRunning('apply', true);
+      break;
+
     case 'apply_progress':
+      if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       appendLiveLog(data);
       break;
 
     case 'apply_done':
       loadAll();
+      if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       if (data.error) {
         showToast(`Apply failed: ${data.error}`, 'error');
         setLastRun('apply', 'Error', true);

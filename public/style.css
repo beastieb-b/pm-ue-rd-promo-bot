@@ -310,6 +310,17 @@ body {
 .scan-dot.inactive { background: var(--label-4); }
 .scan-dot.error { background: var(--red); }
 
+.scan-dot.applying {
+  background: var(--blue);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.2);
+  animation: pulse-blue 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.22); }
+  50%      { box-shadow: 0 0 0 6px rgba(10, 132, 255, 0.06); }
+}
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.2); }
   50%       { box-shadow: 0 0 0 6px rgba(48, 209, 88, 0.06); }

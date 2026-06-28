@@ -65,6 +65,8 @@ const scanStatus = {
   nextScanAt: null,
   intervalHours: 2,
   applyRunning: false,
+  applyStartedAt: null,   // when the current apply run began
+  applyCurrentCode: null, // code currently being tried
   lastApplyAt: null,
 };
 
@@ -120,13 +122,18 @@ async function runApply(options = {}) {
   }
   applyRunning = true;
   scanStatus.applyRunning = true;
+  scanStatus.applyStartedAt = new Date();
+  scanStatus.applyCurrentCode = null;
+  // Let any open dashboard know a run just started (covers cron-triggered runs).
+  server.broadcast({ type: 'apply_started', scanStatus });
   try {
     console.log(`[${new Date().toLocaleTimeString()}] Running code applier...`);
     const result = await postmates.runApplyCodes({
       ...options,
       onProgress: (u) => {
         console.log(`  → ${u.code}: ${u.status}${u.detail ? ' — ' + u.detail : ''}`);
-        server.broadcast({ type: 'apply_progress', ...u });
+        if (u.status === 'trying') scanStatus.applyCurrentCode = u.code;
+        server.broadcast({ type: 'apply_progress', ...u, scanStatus });
       },
     });
     if (result.error) {
@@ -137,17 +144,20 @@ async function runApply(options = {}) {
     }
     scanStatus.lastApplyAt = new Date();
     scanStatus.applyRunning = false;
-    server.broadcast({ type: 'apply_done', ...result });
+    scanStatus.applyCurrentCode = null;
+    server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;
   } catch (err) {
     console.error('Apply run crashed:', err.message);
     scanStatus.applyRunning = false;
+    scanStatus.applyCurrentCode = null;
     const result = { error: err.message };
-    server.broadcast({ type: 'apply_done', ...result });
+    server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;
   } finally {
     applyRunning = false;
     scanStatus.applyRunning = false;
+    scanStatus.applyCurrentCode = null;
   }
 }
 
