@@ -55,8 +55,17 @@
       <button class="btn-quit" onclick="quitApp()">⏹ Quit App</button>
     </aside>
 
+    <!-- Dimmed backdrop behind the slide-out sidebar (phones only) -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
     <!-- Main content -->
     <main class="main">
+
+      <!-- Mobile top bar with hamburger (phones only) -->
+      <div class="mobile-topbar">
+        <button class="nav-toggle" id="nav-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button>
+        <span class="mobile-title"><span class="logo-icon">🍔</span> Promo Tracker</span>
+      </div>
 
       <!-- Health warning banner (set when detection looks broken) -->
       <div class="health-banner" id="health-banner" style="display:none">

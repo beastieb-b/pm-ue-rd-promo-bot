@@ -45,11 +45,22 @@ function navigateTo(section) {
   document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
   document.querySelector(`[data-section="${section}"]`).classList.add('active');
   document.getElementById(`section-${section}`).classList.add('active');
+  closeSidebar(); // collapse the mobile drawer after picking a section
 
   if (section === 'log') loadLog();
   if (section === 'queue') loadQueue();
   if (section === 'results') renderResults();
   if (section === 'settings') renderSettings();
+}
+
+// Mobile slide-out sidebar (no-ops visually on desktop where it's always shown)
+function toggleSidebar() {
+  document.querySelector('.sidebar')?.classList.toggle('open');
+  document.getElementById('sidebar-backdrop')?.classList.toggle('open');
+}
+function closeSidebar() {
+  document.querySelector('.sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-backdrop')?.classList.remove('open');
 }
 
 /* ── Data Loading ──────────────────────────────────────────────────────── */
