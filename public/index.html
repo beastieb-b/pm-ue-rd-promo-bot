@@ -304,6 +304,35 @@
           </div>
         </div>
 
+        <!-- Home region card -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>Home Region</h3>
+          </div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Your city / market</div>
+              <div class="settings-desc">Promos localized to anywhere else (e.g. Las Vegas) are marked region-locked and excluded from your total. National and statewide promos always count.</div>
+            </div>
+            <div class="settings-control">
+              <input type="text" id="home-region-input" class="code-input" style="width:160px;text-transform:none;letter-spacing:0;font-weight:500" placeholder="Los Angeles">
+            </div>
+          </div>
+          <div class="settings-row" style="padding-top:0">
+            <div class="settings-info">
+              <div class="settings-label">Also-home names</div>
+              <div class="settings-desc">Comma-separated aliases that count as home (neighborhoods, abbreviations). Example: la, socal, southern california, mar vista</div>
+            </div>
+            <div class="settings-control">
+              <input type="text" id="home-aliases-input" class="code-input" style="width:220px;text-transform:none;letter-spacing:0;font-weight:400" placeholder="la, socal, southern california">
+            </div>
+          </div>
+          <div class="settings-footer">
+            <button class="btn btn-primary btn-sm" onclick="saveHomeRegion()">Save home region</button>
+            <span id="home-region-status" style="margin-left:10px;color:var(--label-3)"></span>
+          </div>
+        </div>
+
         <!-- Scan interval card -->
         <div class="card settings-card">
           <div class="card-header">

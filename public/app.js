@@ -378,6 +378,16 @@ function renderSettings() {
   if (scanEl) setSelectValue(scanEl, s.scanIntervalHours);
   if (applyEl) setSelectValue(applyEl, s.applyIntervalHours);
 
+  // Home region — only repopulate when the field isn't being edited.
+  const hrEl = document.getElementById('home-region-input');
+  const haEl = document.getElementById('home-aliases-input');
+  if (hrEl && document.activeElement !== hrEl) hrEl.value = s.homeRegion || '';
+  if (haEl && document.activeElement !== haEl) {
+    // Show aliases minus the region label itself (which is always implied).
+    const label = (s.homeRegion || '').toLowerCase();
+    haEl.value = (s.homeAliases || []).filter(a => a !== label).join(', ');
+  }
+
   // Login card — three states: true (confirmed), false (confirmed not), null (unverified)
   const loggedIn = stats.loggedIn;
   const badge = document.getElementById('login-status-badge');
@@ -569,6 +579,25 @@ function renderResults() {
 
     const deleteCell = document.createElement('td');
     deleteCell.className = 'result-delete-cell';
+
+    // Let the user correct the verdict: a success they know is region-locked,
+    // or a region-locked one that's actually usable here.
+    if (r.result === 'success') {
+      const lockBtn = document.createElement('button');
+      lockBtn.className = 'result-action-btn';
+      lockBtn.title = "Mark region-locked (doesn't count toward total)";
+      lockBtn.textContent = '📍';
+      lockBtn.addEventListener('click', () => reclassifyResult(r.code, 'region_skip'));
+      deleteCell.appendChild(lockBtn);
+    } else if (r.result === 'region_skip') {
+      const countBtn = document.createElement('button');
+      countBtn.className = 'result-action-btn';
+      countBtn.title = 'Count as savings (it works here)';
+      countBtn.textContent = '✓$';
+      countBtn.addEventListener('click', () => reclassifyResult(r.code, 'success'));
+      deleteCell.appendChild(countBtn);
+    }
+
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'result-delete-btn';
     deleteBtn.title = 'Remove';
@@ -611,6 +640,20 @@ async function saveScanInterval() {
 async function saveApplyInterval() {
   const val = parseFloat(document.getElementById('apply-interval').value);
   await saveSettings({ applyIntervalHours: val });
+}
+
+async function saveHomeRegion() {
+  const homeRegion = (document.getElementById('home-region-input').value || '').trim();
+  const aliasesRaw = (document.getElementById('home-aliases-input').value || '').trim();
+  if (!homeRegion) { showToast('Enter a home region', 'error'); return; }
+  const homeAliases = aliasesRaw ? aliasesRaw.split(',').map(a => a.trim()).filter(Boolean) : [];
+  const statusEl = document.getElementById('home-region-status');
+  try {
+    await saveSettings({ homeRegion, homeAliases });
+    if (statusEl) { statusEl.textContent = '✓ Saved'; setTimeout(() => { statusEl.textContent = ''; }, 2500); }
+  } catch {
+    showToast('Failed to save home region', 'error');
+  }
 }
 
 async function saveSettings(updates) {
@@ -1018,6 +1061,27 @@ async function deleteResult(code) {
   } catch {
     if (row) row.style.opacity = '';
     showToast('Failed to delete result', 'error');
+  }
+}
+
+async function reclassifyResult(code, newResult) {
+  const row = processed.find(r => r.code === code);
+  const amount = row ? chipAmount(row.detail) : '';
+  const detail = newResult === 'region_skip'
+    ? `${amount ? amount + ' off' : 'Applied'} — region-locked`
+    : (amount ? `${amount} off` : 'Applied!');
+  try {
+    await fetch(`/api/processed/${encodeURIComponent(code)}/reclassify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ result: newResult, detail }),
+    });
+    showToast(newResult === 'region_skip'
+      ? `${code} marked region-locked — won't count toward total`
+      : `${code} now counts toward total`, 'success');
+    loadAll();
+  } catch {
+    showToast('Failed to update result', 'error');
   }
 }
 

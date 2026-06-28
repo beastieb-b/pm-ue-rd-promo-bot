@@ -122,13 +122,18 @@ app.post('/api/settings', (req, res) => {
     const h = parseFloat(applyIntervalHours);
     if (settings.APPLY_INTERVALS.includes(h)) updates.applyIntervalHours = h;
   }
+  if (req.body.homeRegion !== undefined) updates.homeRegion = req.body.homeRegion;
+  if (req.body.homeAliases !== undefined) updates.homeAliases = req.body.homeAliases;
 
   if (!Object.keys(updates).length) {
     return res.status(400).json({ error: 'No valid fields provided' });
   }
 
   const saved = settings.save(updates);
-  if (_rescheduleFn) _rescheduleFn(saved);
+  // Only reschedule when a timing field actually changed.
+  if (_rescheduleFn && (updates.scanIntervalHours !== undefined || updates.applyIntervalHours !== undefined)) {
+    _rescheduleFn(saved);
+  }
   res.json(saved);
 });
 
@@ -242,6 +247,18 @@ app.delete('/api/processed/:code', (req, res) => {
   const deleted = state.deleteResult(req.params.code);
   broadcast({ type: 'processed_updated' });
   res.json({ deleted, code: req.params.code });
+});
+
+// Manually correct a result's verdict — used to flag a success as region-locked
+// (so it stops counting) or to count a region-locked one back as a success.
+app.post('/api/processed/:code/reclassify', (req, res) => {
+  const { result, detail } = req.body || {};
+  if (!['success', 'region_skip'].includes(result)) {
+    return res.status(400).json({ error: 'result must be "success" or "region_skip"' });
+  }
+  const updated = state.reclassifyResult(req.params.code, result, detail ?? null);
+  broadcast({ type: 'processed_updated' });
+  res.json({ updated, code: req.params.code, result });
 });
 
 app.delete('/api/queue/:code', (req, res) => {

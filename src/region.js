@@ -1,39 +1,45 @@
 // Region restriction detection.
 //
-// Many Postmates/UberEats promo codes posted on Reddit are targeted to a single
-// metro and won't apply anywhere else. The user is in Los Angeles, so a code
-// flagged "Vegas only" is useless to them. We read the comment text a code was
-// found in and decide whether it's restricted to a region OTHER than LA.
+// Many Postmates/UberEats promo codes are targeted to a single metro and won't
+// apply elsewhere. The user has a configured home market (Settings → Home
+// region, default Los Angeles); a code locked to anywhere else is useless to
+// them. We read the Reddit comment a code came from, and the Postmates applied-
+// promo location, and decide whether it's restricted to a non-home area.
 //
-// Detection is deliberately conservative: we only flag a code as restricted when
-// the comment uses explicit restriction language ("vegas only", "only works in
-// phoenix", "az-only") next to a non-home city. A bare "worked in Vegas" mention
-// is NOT enough — that's just where one person tried it, not a restriction.
+// Detection from comments is deliberately conservative: we only flag when the
+// text uses explicit restriction language ("vegas only", "only works in
+// phoenix", "az-only") next to a non-home city. A bare "worked in Vegas"
+// mention is NOT enough — that's just where one person tried it.
 
-// The user's home market. A code limited to any of these still works for them.
-const HOME = '(?:los angeles|\\bl\\.?a\\.?\\b|socal|so\\s?cal|southern california)';
+const settings = require('./settings');
 
-// Non-home metros/states. If a code is restricted to one of these, it's no good
-// in LA. (California as a whole, or SoCal, includes LA, so those are NOT here —
-// but specific other-California metros like SF/San Diego/Sacramento are.)
+// Non-home metros/states used to spot "<city> only" restrictions in comments.
 const NON_HOME = '(las vegas|vegas|\\blv\\b|nevada|\\bnv\\b|phoenix|scottsdale|tucson|arizona|\\baz\\b|chicago|illinois|seattle|tacoma|dallas|houston|austin|san antonio|texas|\\btx\\b|miami|orlando|tampa|florida|atlanta|georgia|boston|massachusetts|new york|\\bnyc\\b|manhattan|brooklyn|queens|portland|oregon|denver|colorado|sacramento|san francisco|\\bsf\\b|bay area|norcal|oakland|san jose|san diego|detroit|michigan|nashville|memphis|philadelphia|philly|baltimore|charlotte|minneapolis|cleveland|pittsburgh|washington dc|\\bdc\\b)';
 
-// Restriction phrasings, each capturing the city group ($1).
-const RESTRICTION_PATTERNS = [
-  new RegExp(NON_HOME + '\\s*[- ]?\\s*only\\b', 'i'),                                   // "vegas only", "az-only"
-  new RegExp('\\bonly\\s+(?:works?|valid|good|available|usable)?\\s*(?:in|for|near)\\s+' + NON_HOME, 'i'), // "only works in phoenix"
-  new RegExp('\\b(?:exclusive|targeted|limited|restricted)\\s+(?:to\\s+)?' + NON_HOME, 'i'), // "exclusive to seattle"
-  new RegExp(NON_HOME + '\\s+(?:residents|users|accounts|market|area)\\s+only\\b', 'i'),  // "nyc users only"
-];
+// National / statewide phrasings that are usable from anywhere in the US.
+const NATIONAL_RE = /\b(nationwide|national|united states|\busa?\b|everywhere|all\s+locations?|anywhere|all\s+markets?|california|\bca\b)\b/i;
 
-// Phrasings that confirm a code works in the home market → never flag as restricted.
-const HOME_CONFIRMED = [
-  new RegExp('\\b(?:works?|worked|valid|good|confirmed|used\\s+it)\\b[^.]{0,30}' + HOME, 'i'),
-  new RegExp(HOME + '[^.]{0,25}\\b(?:works?|worked|valid|confirmed|here)\\b', 'i'),
-  new RegExp(HOME + '\\s*[- ]?\\s*only\\b', 'i'), // "LA only" — still fine for the user
-];
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-// Abbreviations that should display fully uppercased rather than title-cased.
+// Build the home matchers from the current settings each call. Apply runs and
+// scans are infrequent, so re-reading settings here keeps changes live without
+// a restart. Cached by the alias signature so repeated calls are cheap.
+let _homeCache = { key: null, label: '', aliasRe: null };
+function getHome() {
+  const s = settings.load();
+  const aliases = (s.homeAliases && s.homeAliases.length ? s.homeAliases : ['los angeles']);
+  const key = aliases.join('|');
+  if (_homeCache.key !== key) {
+    const aliasRe = new RegExp('\\b(' + aliases.map(escapeRe).join('|') + ')\\b', 'i');
+    _homeCache = { key, label: s.homeRegion || 'home', aliasRe };
+  } else {
+    _homeCache.label = s.homeRegion || _homeCache.label;
+  }
+  return _homeCache;
+}
+
 const UPPER = new Set(['lv', 'nv', 'az', 'sf', 'tx', 'nyc', 'dc']);
 
 function titleCase(s) {
@@ -43,60 +49,66 @@ function titleCase(s) {
 }
 
 // Returns { region, restricted, note } or null when there's no region signal.
-//   restricted: true  → code is locked to a region OTHER than Los Angeles
-//   restricted: false → code is confirmed working in / limited to LA (usable)
+//   restricted: true  → locked to a region OTHER than home
+//   restricted: false → confirmed working in / limited to home (usable)
 function detectRegionRestriction(text) {
   if (!text) return null;
   const t = String(text).toLowerCase();
+  const { label, aliasRe } = getHome();
 
-  // If it's confirmed to work in LA, it's usable regardless of other mentions.
-  if (HOME_CONFIRMED.some(re => re.test(t))) {
-    return { region: 'Los Angeles', restricted: false, note: 'Reported working in Los Angeles' };
+  // Restriction phrasings, each capturing the city group ($1).
+  const restrictionPatterns = [
+    new RegExp(NON_HOME + '\\s*[- ]?\\s*only\\b', 'i'),
+    new RegExp('\\bonly\\s+(?:works?|valid|good|available|usable)?\\s*(?:in|for|near)\\s+' + NON_HOME, 'i'),
+    new RegExp('\\b(?:exclusive|targeted|limited|restricted)\\s+(?:to\\s+)?' + NON_HOME, 'i'),
+    new RegExp(NON_HOME + '\\s+(?:residents|users|accounts|market|area)\\s+only\\b', 'i'),
+  ];
+
+  // Confirmed working in the home market → usable regardless of other mentions.
+  const homeConfirmed = [
+    new RegExp('\\b(?:works?|worked|valid|good|confirmed|used\\s+it)\\b[^.]{0,30}' + aliasRe.source, 'i'),
+    new RegExp(aliasRe.source + '[^.]{0,25}\\b(?:works?|worked|valid|confirmed|here)\\b', 'i'),
+    new RegExp(aliasRe.source + '\\s*[- ]?\\s*only\\b', 'i'),
+  ];
+  if (homeConfirmed.some(re => re.test(t))) {
+    return { region: label, restricted: false, note: `Reported working in ${label}` };
   }
 
-  for (const pat of RESTRICTION_PATTERNS) {
+  for (const pat of restrictionPatterns) {
     const m = t.match(pat);
     if (m && m[1]) {
+      // If the matched "non-home" city is actually a home alias, it's fine.
+      if (aliasRe.test(m[1])) continue;
       const city = titleCase(m[1].trim());
-      return { region: city, restricted: true, note: `${city}-only — not valid in Los Angeles` };
+      return { region: city, restricted: true, note: `${city}-only — not valid in ${label}` };
     }
   }
 
   return null;
 }
 
-const HOME_RE = new RegExp(HOME, 'i');
-
 // True when an applied promo's location belongs to the user's home market.
 function isHomeRegion(loc) {
-  return HOME_RE.test(String(loc || ''));
+  if (!loc) return false;
+  return getHome().aliasRe.test(String(loc));
 }
 
-// Locations that are fine for an LA user: home market, California statewide, or
-// national/nationwide promos. Anything else (a specific other metro/state) is
-// not usable here.
-const USABLE_LOC_RE = /\b(los angeles|socal|so\s?cal|southern california|california|\bca\b|nationwide|national|united states|\busa?\b|everywhere|all\s+locations?|anywhere|all\s+markets?)\b/i;
-// California metros that are NOT LA — statewide language doesn't make these usable.
-const NON_HOME_CA_RE = /\b(northern california|norcal|bay area|san francisco|san diego|sacramento|\boakland\b|san jose|fresno)\b/i;
-
-// Decide whether an applied promo's location is usable for the LA user.
-// No location shown → treat as national/usable. A specific non-SoCal locality
-// (Las Vegas, Phoenix, SF, San Diego, …) → not usable.
+// Decide whether an applied promo's location is usable for the user.
+// No location shown → national/usable. National/statewide → usable. Home →
+// usable. A specific other locality (Las Vegas, Phoenix, SF, San Diego…) → not.
 function isUsableLocation(loc) {
   if (!loc) return true;
   const s = String(loc).toLowerCase().trim();
-  if (NON_HOME_CA_RE.test(s)) return false;
-  return USABLE_LOC_RE.test(s);
+  if (NATIONAL_RE.test(s)) return true;
+  return getHome().aliasRe.test(s);
 }
 
 // Parse the "Location:" field Postmates shows on an applied promo's detail
 // sheet (modal text arrives lowercased). Returns the location string or null.
-// e.g. a sheet reading "Enjoy $10 Off … Location\nLas Vegas …" → "Las Vegas".
 function extractAppliedLocation(text) {
   const m = String(text || '').match(/\blocation\b\s*[:\n]\s*([a-z][a-z .'\-]{1,40})/i);
   if (!m) return null;
   const loc = m[1].split('\n')[0].replace(/\s+/g, ' ').trim();
-  // Guard against catching a sentence ("location of the restaurant…").
   return loc.length <= 40 ? loc : null;
 }
 

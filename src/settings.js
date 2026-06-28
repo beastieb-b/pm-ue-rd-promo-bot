@@ -13,6 +13,11 @@ let setupStatusCacheAt = 0;
 const DEFAULTS = {
   scanIntervalHours: 2,
   applyIntervalHours: 4,
+  // Home market. A promo localized to anywhere matching homeAliases (or to the
+  // state / nationwide) is usable; anything else is region-locked and excluded
+  // from savings. homeRegion is the human label used in messages.
+  homeRegion: 'Los Angeles',
+  homeAliases: ['los angeles', 'la', 'socal', 'so cal', 'southern california'],
 };
 
 const SCAN_INTERVALS = [0.5, 1, 2, 3, 4, 6, 12, 24];
@@ -23,6 +28,24 @@ function normalizeInterval(value, allowed, fallback) {
   return allowed.includes(n) ? n : fallback;
 }
 
+function normalizeHomeRegion(value) {
+  const s = String(value || '').trim();
+  return s || DEFAULTS.homeRegion;
+}
+
+// Aliases are lowercased, de-duped, and always include the home region label
+// itself so a plain "Los Angeles" location always matches.
+function normalizeAliases(value, homeRegion) {
+  let list = Array.isArray(value)
+    ? value
+    : String(value || '').split(',');
+  const label = normalizeHomeRegion(homeRegion).toLowerCase();
+  list = [...list, label]
+    .map(a => String(a).trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(list)];
+}
+
 function load() {
   if (!fs.existsSync(SETTINGS_FILE)) return { ...DEFAULTS };
   try {
@@ -30,6 +53,8 @@ function load() {
     return {
       scanIntervalHours: normalizeInterval(loaded.scanIntervalHours, SCAN_INTERVALS, DEFAULTS.scanIntervalHours),
       applyIntervalHours: normalizeInterval(loaded.applyIntervalHours, APPLY_INTERVALS, DEFAULTS.applyIntervalHours),
+      homeRegion: normalizeHomeRegion(loaded.homeRegion),
+      homeAliases: normalizeAliases(loaded.homeAliases, loaded.homeRegion),
     };
   } catch {
     return { ...DEFAULTS };
@@ -38,6 +63,9 @@ function load() {
 
 function save(updates) {
   const current = load();
+  const homeRegion = updates.homeRegion !== undefined
+    ? normalizeHomeRegion(updates.homeRegion)
+    : current.homeRegion;
   const next = {
     scanIntervalHours: updates.scanIntervalHours !== undefined
       ? normalizeInterval(updates.scanIntervalHours, SCAN_INTERVALS, current.scanIntervalHours)
@@ -45,6 +73,10 @@ function save(updates) {
     applyIntervalHours: updates.applyIntervalHours !== undefined
       ? normalizeInterval(updates.applyIntervalHours, APPLY_INTERVALS, current.applyIntervalHours)
       : current.applyIntervalHours,
+    homeRegion,
+    homeAliases: updates.homeAliases !== undefined
+      ? normalizeAliases(updates.homeAliases, homeRegion)
+      : normalizeAliases(current.homeAliases, homeRegion),
   };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
   return next;

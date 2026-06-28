@@ -177,6 +177,28 @@ function markResult(code, result, detail = null) {
   return true;
 }
 
+// Change an already-processed code's result in place (keeps its timestamp).
+// Used by the dashboard to let the user correct a verdict — e.g. flag a
+// success as region-locked (so it stops counting) or count one back.
+function reclassifyResult(code, newResult, detail = null) {
+  const normalized = normalizeCode(code);
+  if (!normalized || !fs.existsSync(cfg.PROCESSED_FILE)) return false;
+  const safeDetail = detail !== null ? String(detail).replace(/[\t\n\r]/g, ' ').slice(0, 120) : null;
+  let found = false;
+  const lines = fs.readFileSync(cfg.PROCESSED_FILE, 'utf8').split('\n').filter(Boolean).map(line => {
+    const parts = line.includes('\t') ? line.split('\t') : [line.slice(0, line.lastIndexOf(':')), line.slice(line.lastIndexOf(':') + 1)];
+    if (parts[0] !== normalized) return line;
+    found = true;
+    const [c, , oldDetail, ts] = parts;
+    return [c, newResult, safeDetail !== null ? safeDetail : (oldDetail || ''), ts || new Date().toISOString()].join('\t');
+  });
+  if (!found) return false;
+  fs.writeFileSync(cfg.PROCESSED_FILE, lines.join('\n') + '\n');
+  // Keep the catalog's region flag in sync with a manual region-lock toggle.
+  mergeCodeMeta(normalized, { regionRestricted: newResult === 'region_skip' });
+  return true;
+}
+
 // ── Tried codes (codes found in Reddit thread, avoids re-queuing) ────────────
 
 function getTriedState() {
@@ -391,7 +413,7 @@ module.exports = {
   getCodeCatalog, saveCodeCatalog, mergeCodeMeta, setSourceStatus,
   getQueue, addToQueue, removeFromQueue,
   getQueueDetails,
-  getProcessed, markResult, deleteResult,
+  getProcessed, markResult, reclassifyResult, deleteResult,
   getProcessedDetails,
   getTriedState, saveTriedState,
   getThreadId, getThreadMonth, saveThreadId,
