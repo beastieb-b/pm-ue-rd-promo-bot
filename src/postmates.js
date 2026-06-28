@@ -33,12 +33,22 @@ async function getBrowserContext(headless = true) {
     channel: 'chrome',
     headless,
     chromiumSandbox: true,   // prevents Playwright from injecting --no-sandbox
+    // Drop Playwright's default --enable-automation so Chrome doesn't show the
+    // "controlled by automated software" / "unsupported command-line flag"
+    // infobars (the yellow banner). We achieve the anti-detection that the old
+    // --disable-blink-features=AutomationControlled flag gave us via an init
+    // script below instead, which doesn't trigger the banner.
+    ignoreDefaultArgs: ['--enable-automation'],
     args: [
       '--no-first-run',
       '--disable-default-apps',
-      '--disable-blink-features=AutomationControlled',
     ],
     viewport: { width: 1280, height: 800 },
+  });
+
+  // Hide the automation fingerprint without a command-line flag.
+  await _context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
 
   return _context;
