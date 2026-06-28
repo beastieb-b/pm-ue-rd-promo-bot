@@ -7,33 +7,22 @@ const settings = require('./settings');
 const app = express();
 app.use(express.json({ limit: '8kb' }));
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
-
-function hostName(value) {
-  if (!value) return '';
-  const host = value.split(',')[0].trim().toLowerCase();
-  if (host.startsWith('[')) return host.slice(1, host.indexOf(']'));
-  return host.split(':')[0];
-}
-
-function isLocalHost(value) {
-  return LOCAL_HOSTS.has(hostName(value));
-}
-
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  try {
-    const url = new URL(origin);
-    return LOCAL_HOSTS.has(url.hostname) && (!url.port || Number(url.port) === cfg.DASHBOARD_PORT);
-  } catch {
-    return false;
-  }
-}
-
+// CSRF guard for mutations: allow same-origin requests (the dashboard's own
+// buttons) from any host — localhost OR the Tailscale hostname/IP — and block
+// cross-origin ones. A browser always sends Origin on same-origin POSTs, and it
+// must match the Host. (The old check required a localhost Host, which 403'd
+// every button when the dashboard was opened over Tailscale.)
 app.use((req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  if (!isLocalHost(req.headers.host) || !isAllowedOrigin(req.headers.origin)) {
-    return res.status(403).json({ error: 'Local dashboard requests only' });
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      if (new URL(origin).host.toLowerCase() !== String(req.headers.host || '').toLowerCase()) {
+        return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'Invalid origin' });
+    }
   }
   next();
 });

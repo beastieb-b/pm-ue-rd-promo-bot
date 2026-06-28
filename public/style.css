@@ -1011,7 +1011,10 @@ body {
   border-color: rgba(10, 132, 255, 0.3);
 }
 
-.results-table { width: 100%; border-collapse: collapse; }
+/* Horizontal scroll so the table never clips/overlaps when the window is
+   narrower than the columns need (e.g. a laptop after the 220px sidebar). */
+.table-scroll { overflow-x: auto; }
+.results-table { width: 100%; border-collapse: collapse; min-width: 760px; }
 /* Keep the Source/When/Result cells on one line so rows stay a tidy height;
    Details is allowed to wrap. */
 .results-table td:nth-child(2),
