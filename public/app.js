@@ -596,6 +596,13 @@ function renderResults() {
       countBtn.textContent = '✓$';
       countBtn.addEventListener('click', () => reclassifyResult(r.code, 'success'));
       deleteCell.appendChild(countBtn);
+    } else if (['rejected', 'error', 'unknown'].includes(r.result)) {
+      const retryBtn = document.createElement('button');
+      retryBtn.className = 'result-action-btn';
+      retryBtn.title = 'Add back to queue to try again';
+      retryBtn.textContent = '↻';
+      retryBtn.addEventListener('click', () => requeueResult(r.code));
+      deleteCell.appendChild(retryBtn);
     }
 
     const deleteBtn = document.createElement('button');
@@ -1061,6 +1068,20 @@ async function deleteResult(code) {
   } catch {
     if (row) row.style.opacity = '';
     showToast('Failed to delete result', 'error');
+  }
+}
+
+async function requeueResult(code) {
+  const row = document.getElementById(`result-row-${cssToken(code)}`);
+  if (row) { row.style.opacity = '0.3'; row.style.transition = 'opacity 0.15s'; }
+  try {
+    await fetch(`/api/processed/${encodeURIComponent(code)}/requeue`, { method: 'POST' });
+    showToast(`${code} added back to queue — will retry next run`, 'success');
+    loadAll();
+    loadQueue();
+  } catch {
+    if (row) row.style.opacity = '';
+    showToast('Failed to re-queue code', 'error');
   }
 }
 

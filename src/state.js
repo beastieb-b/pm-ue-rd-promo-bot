@@ -177,6 +177,18 @@ function markResult(code, result, detail = null) {
   return true;
 }
 
+// Put a processed code back in the queue to be tried again. Removes it from
+// processed + tried state (so it's eligible) and re-adds it to the queue with
+// its existing catalog metadata. Used by the "retry" action on failed results.
+function requeueResult(code) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+  deleteResult(normalized); // clears it from processed.txt and tried_codes
+  const meta = getCodeCatalog().codes[normalized] || {};
+  addToQueue([{ code: normalized, ...meta }]);
+  return true;
+}
+
 // Change an already-processed code's result in place (keeps its timestamp).
 // Used by the dashboard to let the user correct a verdict — e.g. flag a
 // success as region-locked (so it stops counting) or count one back.
@@ -413,7 +425,7 @@ module.exports = {
   getCodeCatalog, saveCodeCatalog, mergeCodeMeta, setSourceStatus,
   getQueue, addToQueue, removeFromQueue,
   getQueueDetails,
-  getProcessed, markResult, reclassifyResult, deleteResult,
+  getProcessed, markResult, reclassifyResult, requeueResult, deleteResult,
   getProcessedDetails,
   getTriedState, saveTriedState,
   getThreadId, getThreadMonth, saveThreadId,

@@ -249,6 +249,14 @@ app.delete('/api/processed/:code', (req, res) => {
   res.json({ deleted, code: req.params.code });
 });
 
+// Put a failed result back in the queue to be retried on the next apply run.
+app.post('/api/processed/:code/requeue', (req, res) => {
+  const requeued = state.requeueResult(req.params.code);
+  broadcast({ type: 'queue_updated' });
+  broadcast({ type: 'processed_updated' });
+  res.json({ requeued, code: req.params.code });
+});
+
 // Manually correct a result's verdict — used to flag a success as region-locked
 // (so it stops counting) or to count a region-locked one back as a success.
 app.post('/api/processed/:code/reclassify', (req, res) => {
