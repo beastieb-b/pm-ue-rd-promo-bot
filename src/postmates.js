@@ -251,6 +251,22 @@ async function dismissPopups(page) {
   }
 }
 
+// Postmates sometimes covers the code-entry modal with a promotional offer
+// modal ("Enjoy 20% Off … See eligible stores") that has no input field. If a
+// dialog is open but contains no input, close it (Escape) so the code-entry
+// modal underneath can be reached. Returns true if it dismissed something.
+// Never touches a dialog that HAS an input — that's the code-entry modal.
+async function dismissNoInputModal(page) {
+  const dialog = page.locator('[role="dialog"], [aria-modal="true"]').first();
+  const visible = await dialog.isVisible({ timeout: 500 }).catch(() => false);
+  if (!visible) return false;
+  const hasInput = await dialog.locator('input').first().isVisible({ timeout: 300 }).catch(() => false);
+  if (hasInput) return false; // it's the code-entry modal — leave it alone
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(600);
+  return true;
+}
+
 async function applyCode(page, code) {
   // Navigate to promo modal URL.
   // First load often redirects to mod=messagingInterstitial ("what's new" popup)
@@ -271,21 +287,25 @@ async function applyCode(page, code) {
   // Scope to dialogs that contain an input so we never grab a cookie banner or
   // address confirmation modal that happens to appear at the same time.
   const modalSelector = '[role="dialog"]:has(input), [aria-modal="true"]:has(input)';
-  let modalLocator = page.locator(modalSelector).first();
-  let modalOpen = await modalLocator.isVisible({ timeout: 6000 }).catch(() => false);
 
-  // If the interstitial hijacked the first load, navigate again — the promo
-  // modal reliably appears on the second visit.
-  if (!modalOpen) {
-    await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(2500);
+  // Up to 3 attempts. The code-entry modal is sometimes covered by the
+  // messagingInterstitial or a promotional offer modal ("Enjoy 20% Off …")
+  // that has no input. Each pass: dismiss generic popups, dismiss any
+  // no-input dialog blocking the view, then look for the code-entry modal.
+  // Reload between attempts since a fresh visit re-opens the promos panel.
+  let modalOpen = false;
+  for (let attempt = 0; attempt < 3 && !modalOpen; attempt++) {
+    if (attempt > 0) {
+      await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2500);
+    }
     await dismissPopups(page);
-    modalLocator = page.locator(modalSelector).first();
+    await dismissNoInputModal(page);
+    modalOpen = await page.locator(modalSelector).first().isVisible({ timeout: 6000 }).catch(() => false);
   }
 
-  try {
-    await modalLocator.waitFor({ state: 'visible', timeout: 8000 });
-  } catch {
+  const modalLocator = page.locator(modalSelector).first();
+  if (!modalOpen) {
     // Modal didn't appear — take a debug screenshot and bail; typing into
     // the global search bar (the next visible input) is worse than failing.
     try {
@@ -296,9 +316,6 @@ async function applyCode(page, code) {
     } catch {}
     return { result: 'error', detail: 'Promo modal did not open' };
   }
-
-  // Dismiss any popups that appeared after navigation before clicking the input
-  await dismissPopups(page);
 
   // Find the promo code input — scope to the modal so we never match the
   // global search bar. 'input[type="text"]' is intentionally excluded; it is
