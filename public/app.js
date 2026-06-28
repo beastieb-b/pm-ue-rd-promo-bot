@@ -568,7 +568,6 @@ function renderResults() {
     detailCell.innerHTML = `
       <div>${escapeHtml(r.detail || '—')}</div>
       ${regionNote}
-      ${r.statusNote ? `<div class="result-submeta">${escapeHtml(r.statusNote)}</div>` : ''}
     `;
 
     const timeCell = document.createElement('td');
@@ -598,9 +597,9 @@ function renderResults() {
       deleteCell.appendChild(countBtn);
     } else if (['rejected', 'error', 'unknown'].includes(r.result)) {
       const retryBtn = document.createElement('button');
-      retryBtn.className = 'result-action-btn';
+      retryBtn.className = 'result-retry-btn';
       retryBtn.title = 'Add back to queue to try again';
-      retryBtn.textContent = '↻';
+      retryBtn.innerHTML = '↻<span class="btn-label"> Retry</span>';
       retryBtn.addEventListener('click', () => requeueResult(r.code));
       deleteCell.appendChild(retryBtn);
     }

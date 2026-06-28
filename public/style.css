@@ -1033,39 +1033,58 @@ body {
 .results-table tr:last-child td { border-bottom: none; }
 .results-table tr:hover td { background: rgba(255,255,255,0.025); }
 
-.result-delete-cell { width: 76px; text-align: right; white-space: nowrap; padding-right: 12px !important; }
-
-.result-delete-btn {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: var(--label-3);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 5px;
-  transition: opacity var(--t), background var(--t), color var(--t);
-  font-family: inherit;
+.result-delete-cell {
+  width: 150px;
+  text-align: right;
+  white-space: nowrap;
+  padding-right: 12px !important;
 }
 
-.result-row:hover .result-delete-btn { opacity: 1; }
+/* Row actions are always visible (no hover-reveal — that fade caused scroll
+   ghosting and hid the controls). */
+.result-delete-btn {
+  background: none;
+  border: none;
+  color: var(--label-4);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: 6px;
+  transition: background var(--t), color var(--t);
+  font-family: inherit;
+}
 .result-delete-btn:hover { background: var(--red-fill); color: var(--red); }
 
 .result-action-btn {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: var(--label-3);
+  background: var(--bg-3);
+  border: 1px solid var(--sep);
+  color: var(--label-2);
   font-size: 12px;
   cursor: pointer;
-  padding: 3px 6px;
-  margin-right: 2px;
-  border-radius: 5px;
-  transition: opacity var(--t), background var(--t), color var(--t);
+  padding: 4px 8px;
+  margin-right: 4px;
+  border-radius: 6px;
+  transition: background var(--t), color var(--t);
   font-family: inherit;
 }
-.result-row:hover .result-action-btn { opacity: 1; }
-.result-action-btn:hover { background: var(--orange-fill); color: var(--orange); }
+.result-action-btn:hover { background: var(--orange-fill); color: var(--orange); border-color: rgba(255,159,10,0.3); }
+
+/* Retry — the obvious, always-visible primary action on failed rows */
+.result-retry-btn {
+  background: var(--blue-fill);
+  border: 1px solid rgba(10, 132, 255, 0.3);
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 10px;
+  margin-right: 4px;
+  border-radius: 6px;
+  transition: background var(--t), filter var(--t);
+  font-family: inherit;
+}
+.result-retry-btn:hover { background: rgba(10, 132, 255, 0.28); }
+.result-retry-btn:active { filter: brightness(0.9); }
 
 .result-code {
   font-family: 'SF Mono', 'Menlo', monospace;
@@ -1343,4 +1362,12 @@ body {
   .section-header { flex-direction: column; align-items: flex-start; }
   .add-code-form { width: 100%; }
   .add-code-form .code-input { flex: 1; width: auto; }
+
+  /* Save horizontal space: hide the When column and collapse the retry label
+     to just its icon so the actions stay on-screen. */
+  .results-table th:nth-child(5),
+  .results-table td:nth-child(5) { display: none; }
+  .result-retry-btn .btn-label { display: none; }
+  .result-retry-btn { padding: 4px 8px; }
+  .result-delete-cell { width: 84px; }
 }
