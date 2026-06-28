@@ -1100,13 +1100,18 @@ body {
   letter-spacing: 0.3px;
 }
 
-.result-code-stack,
-.result-source,
-.result-detail {
+/* Only the inner div may be flex. NEVER put display:flex on the <td>s
+   (.result-source / .result-detail are table cells) — that drops them out of
+   the table layout and misaligns the row dividers across columns. */
+.result-code-stack {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+/* Cells keep normal block flow; space the sub-label with a margin instead. */
+.result-source .result-submeta,
+.result-detail .result-submeta,
+.result-detail .region-note { margin-top: 2px; }
 
 .result-code-value {
   font-family: 'SF Mono', 'Menlo', monospace;
