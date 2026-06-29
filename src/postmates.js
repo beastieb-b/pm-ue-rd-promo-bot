@@ -429,9 +429,23 @@ async function runApplyCodes(options = {}) {
 
   let page = null;
   try {
-    const queue = state.getQueue();
     const processed = new Set(state.getProcessed().map(r => r.code));
-    const pending = queue.filter(c => !processed.has(c)).slice(0, maxCodes);
+    // Order the queue so the best candidates get the limited per-run budget
+    // first — codes containing digits (far more likely to be real promo codes
+    // than a stray word), then higher catalog confidence, then most recently
+    // seen. We never SKIP anything: lower-priority codes are simply tried on
+    // later runs, so a "dead/expired" community note never excludes a code
+    // (those reports are often wrong).
+    const pending = state.getQueueDetails()
+      .filter(e => !processed.has(e.code))
+      .map(e => ({
+        code: e.code,
+        score: (/\d/.test(e.code) ? 1000 : 0) + (Number(e.confidenceScore) || 0),
+        seen: e.lastSeenAt ? (Date.parse(e.lastSeenAt) || 0) : 0,
+      }))
+      .sort((a, b) => (b.score - a.score) || (b.seen - a.seen))
+      .slice(0, maxCodes)
+      .map(e => e.code);
 
     if (!pending.length) {
       state.appendLog({ type: 'apply_run_done', reason: 'no_pending_codes' });

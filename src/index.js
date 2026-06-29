@@ -96,6 +96,7 @@ async function runReddit() {
       scanStatus.lastScanError = result.error;
       console.error('  Reddit error:', result.error);
     } else {
+      state.recordHeartbeat('scan'); // for the staleness watchdog
       const pm = result.postmates, ue = result.ubereats;
       console.log(`  r/postmates: ${pm?.threadId || '?'} | ${pm?.commentsScanned ?? 0} comments | ${pm?.newCodes ?? 0} new`);
       console.log(`  r/UberEATS:  ${ue?.threadId || '?'} | ${ue?.commentsScanned ?? 0} comments | ${ue?.newCodes ?? 0} new`);
@@ -145,6 +146,7 @@ async function runApply(options = {}) {
     scanStatus.lastApplyAt = new Date();
     scanStatus.applyRunning = false;
     scanStatus.applyCurrentCode = null;
+    if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
     server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;
   } catch (err) {

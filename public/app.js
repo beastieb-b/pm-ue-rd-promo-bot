@@ -258,6 +258,19 @@ function renderScanStatus() {
     return;
   }
 
+  // Staleness watchdog: if the last successful scan is far older than the
+  // interval, the daemon is probably stalled or the Mac was asleep. Uses the
+  // persisted heartbeat so it's accurate even right after a restart.
+  const lastScan = stats.heartbeat?.scan ? new Date(stats.heartbeat.scan)
+    : (s.lastScanAt ? new Date(s.lastScanAt) : null);
+  const staleMs = Math.max(90 * 60000, (s.intervalHours || 2) * 3600000 * 3);
+  if (lastScan && (Date.now() - lastScan.getTime()) > staleMs) {
+    dot.className = 'scan-dot error';
+    label.textContent = '⚠️ Scans stalled';
+    meta.innerHTML = `<span class="scan-meta-item" style="color:var(--danger)">No successful scan in ${formatDuration(Date.now() - lastScan.getTime())} — daemon may be down or the Mac asleep</span>`;
+    return;
+  }
+
   if (s.lastScanError) {
     dot.className = 'scan-dot error';
     label.textContent = 'Scan error';

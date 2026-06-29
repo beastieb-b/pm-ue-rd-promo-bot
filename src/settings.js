@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
 const cfg = require('./config');
+const { writeFileAtomic } = require('./atomic');
 
 const SETTINGS_FILE = path.join(cfg.DATA_DIR, 'settings.json');
 const SERVICE_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.postmates.promo.plist');
@@ -78,7 +79,7 @@ function save(updates) {
       ? normalizeAliases(updates.homeAliases, homeRegion)
       : normalizeAliases(current.homeAliases, homeRegion),
   };
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
+  writeFileAtomic(SETTINGS_FILE, JSON.stringify(next, null, 2));
   return next;
 }
 

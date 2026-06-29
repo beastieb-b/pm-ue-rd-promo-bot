@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
+const { writeFileAtomic } = require('./atomic');
 
 function ensureDirs() {
   [cfg.DATA_DIR, cfg.ARCHIVE_DIR, cfg.BROWSER_PROFILE_DIR].forEach(d => {
@@ -36,7 +37,7 @@ function getCodeCatalog() {
 }
 
 function saveCodeCatalog(catalog) {
-  fs.writeFileSync(cfg.CODE_CATALOG_FILE, JSON.stringify(catalog, null, 2));
+  writeFileAtomic(cfg.CODE_CATALOG_FILE, JSON.stringify(catalog, null, 2));
 }
 
 function mergeCodeMeta(code, meta = {}) {
@@ -98,7 +99,7 @@ function removeFromQueue(code) {
   const normalized = normalizeCode(code);
   if (!normalized) return false;
   const queue = getQueue().filter(c => c !== normalized);
-  fs.writeFileSync(cfg.QUEUE_FILE, queue.join('\n') + (queue.length ? '\n' : ''));
+  writeFileAtomic(cfg.QUEUE_FILE, queue.join('\n') + (queue.length ? '\n' : ''));
   return true;
 }
 
@@ -150,7 +151,7 @@ function deleteResult(code) {
         const entryCode = line.includes('\t') ? line.split('\t')[0] : line.slice(0, line.lastIndexOf(':'));
         return entryCode !== normalized;
       });
-    fs.writeFileSync(cfg.PROCESSED_FILE, lines.join('\n') + (lines.length ? '\n' : ''));
+    writeFileAtomic(cfg.PROCESSED_FILE, lines.join('\n') + (lines.length ? '\n' : ''));
   }
 
   // 2. Remove from tried_codes.json so the next Reddit scan re-queues it
@@ -205,7 +206,7 @@ function reclassifyResult(code, newResult, detail = null) {
     return [c, newResult, safeDetail !== null ? safeDetail : (oldDetail || ''), ts || new Date().toISOString()].join('\t');
   });
   if (!found) return false;
-  fs.writeFileSync(cfg.PROCESSED_FILE, lines.join('\n') + '\n');
+  writeFileAtomic(cfg.PROCESSED_FILE, lines.join('\n') + '\n');
   // Keep the catalog's region flag in sync with a manual region-lock toggle.
   mergeCodeMeta(normalized, { regionRestricted: newResult === 'region_skip' });
   return true;
@@ -225,7 +226,7 @@ function getTriedState() {
 }
 
 function saveTriedState(state) {
-  fs.writeFileSync(cfg.TRIED_FILE, JSON.stringify(state, null, 2));
+  writeFileAtomic(cfg.TRIED_FILE, JSON.stringify(state, null, 2));
 }
 
 // ── Thread config ────────────────────────────────────────────────────────────
@@ -241,8 +242,8 @@ function getThreadMonth() {
 }
 
 function saveThreadId(id, month) {
-  fs.writeFileSync(cfg.THREAD_FILE, id);
-  fs.writeFileSync(cfg.THREAD_MONTH_FILE, month);
+  writeFileAtomic(cfg.THREAD_FILE, id);
+  writeFileAtomic(cfg.THREAD_MONTH_FILE, month);
 }
 
 // ── Monthly reset ─────────────────────────────────────────────────────────────
@@ -302,8 +303,8 @@ function getUEThreadMonth() {
 }
 
 function saveUEThreadId(id, month) {
-  fs.writeFileSync(cfg.UE_THREAD_FILE, id);
-  fs.writeFileSync(cfg.UE_THREAD_MONTH_FILE, month);
+  writeFileAtomic(cfg.UE_THREAD_FILE, id);
+  writeFileAtomic(cfg.UE_THREAD_MONTH_FILE, month);
 }
 
 function getUETriedState() {
@@ -315,7 +316,7 @@ function getUETriedState() {
 }
 
 function saveUETriedState(state) {
-  fs.writeFileSync(cfg.UE_TRIED_FILE, JSON.stringify(state, null, 2));
+  writeFileAtomic(cfg.UE_TRIED_FILE, JSON.stringify(state, null, 2));
 }
 
 function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
@@ -329,7 +330,7 @@ function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
 const HEALTH_FILE = path.join(cfg.DATA_DIR, 'health.json');
 
 function setHealthWarning(message) {
-  fs.writeFileSync(HEALTH_FILE, JSON.stringify({ message, ts: new Date().toISOString() }));
+  writeFileAtomic(HEALTH_FILE, JSON.stringify({ message, ts: new Date().toISOString() }));
 }
 
 function getHealthWarning() {
@@ -339,6 +340,24 @@ function getHealthWarning() {
 
 function clearHealthWarning() {
   try { fs.unlinkSync(HEALTH_FILE); } catch {}
+}
+
+// ── Heartbeat (persisted last-success times for the staleness watchdog) ──────
+// Survives daemon restarts so the dashboard can tell "hasn't run in X hours"
+// even right after a restart or a machine wake.
+
+const HEARTBEAT_FILE = path.join(cfg.DATA_DIR, 'heartbeat.json');
+
+function getHeartbeat() {
+  if (!fs.existsSync(HEARTBEAT_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8')); } catch { return {}; }
+}
+
+// kind: 'scan' (a successful source scan) or 'apply' (a completed apply run)
+function recordHeartbeat(kind) {
+  const hb = getHeartbeat();
+  hb[kind] = new Date().toISOString();
+  writeFileAtomic(HEARTBEAT_FILE, JSON.stringify(hb));
 }
 
 // ── Savings ──────────────────────────────────────────────────────────────────
@@ -407,6 +426,7 @@ function getStats() {
     successRate: processed.length ? Math.round(successes.length / processed.length * 100) : 0,
     savedThisMonth,
     savedLastMonth,
+    heartbeat: getHeartbeat(),
     successCodes: successes.map(r => r.code),
     successList: successes.map(r => ({ code: r.code, detail: r.detail })),
     regionLockedCount: regionLocked.length,
@@ -435,5 +455,7 @@ module.exports = {
   ueMonthlyReset,
   appendLog, getLog,
   setHealthWarning, getHealthWarning, clearHealthWarning,
+  getHeartbeat, recordHeartbeat,
+  parseSavings, sumSavings,
   getStats,
 };
