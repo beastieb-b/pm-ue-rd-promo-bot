@@ -1018,6 +1018,27 @@ body {
   margin-left: 2px;
 }
 
+.results-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.results-search {
+  width: 170px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.meta-pill.next-up {
+  color: var(--green);
+  border-color: rgba(48, 209, 88, 0.3);
+  background: var(--green-fill);
+}
+
 .queue-hint {
   padding: 10px 16px 0;
   font-size: 12.5px;
@@ -1385,13 +1406,8 @@ body {
   .cards-row  { grid-template-columns: 1fr; }
   .log-entry  { grid-template-columns: 140px 1fr; }
   .log-detail { display: none; }
-
-  /* Results table: drop the lower-priority Source + Details columns so the
-     essentials (code, result, when) stay readable without horizontal scroll */
-  .results-table th:nth-child(2),
-  .results-table td:nth-child(2),
-  .results-table th:nth-child(4),
-  .results-table td:nth-child(4) { display: none; }
+  /* Results keeps all columns here and scrolls horizontally (see .table-scroll);
+     on phones (≤640px) it switches to a card layout below — nothing is hidden. */
 }
 
 /* Mobile nav — hidden on desktop, slide-out drawer on phones */
@@ -1464,11 +1480,49 @@ body {
   .add-code-form { width: 100%; }
   .add-code-form .code-input { flex: 1; width: auto; }
 
-  /* Save horizontal space: hide the When column and collapse the retry label
-     to just its icon so the actions stay on-screen. */
-  .results-table th:nth-child(5),
-  .results-table td:nth-child(5) { display: none; }
-  .result-retry-btn .btn-label { display: none; }
-  .result-retry-btn { padding: 4px 8px; }
-  .result-delete-cell { width: 84px; }
+  /* Results becomes a stack of cards on phones so NOTHING is hidden — the
+     rejection reason and the source/comment link stay visible (they used to be
+     dropped). Each row is a card; each cell shows its column name as a label. */
+  .table-scroll { overflow-x: visible; }
+  .results-table { min-width: 0; }
+  .results-table thead { display: none; }
+  .results-table, .results-table tbody { display: block; width: 100%; }
+  .results-table tr.result-row {
+    display: block;
+    background: var(--bg-2);
+    border: 1px solid var(--sep-opaque);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    padding: 4px 2px;
+  }
+  .results-table tr.result-row td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 14px;
+    border: none;
+    text-align: right;
+  }
+  .results-table tr.result-row td::before {
+    content: attr(data-label);
+    color: var(--label-3);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    text-align: left;
+  }
+  /* Code: no label, shown prominent at the top of the card */
+  .results-table tr.result-row td.result-code { padding-top: 10px; }
+  .results-table tr.result-row td.result-code::before { display: none; }
+  .results-table tr.result-row td.result-code .result-code-value { font-size: 15px; }
+  /* Source/Details may wrap to two lines — align their label to the top */
+  .results-table tr.result-row td.result-source,
+  .results-table tr.result-row td.result-detail { align-items: flex-start; }
+  /* Actions: right-aligned button row, no label, full "Retry" text */
+  .result-delete-cell { width: auto; }
+  .results-table tr.result-row td.result-delete-cell { justify-content: flex-end; }
+  .results-table tr.result-row td.result-delete-cell::before { display: none; }
 }

@@ -212,12 +212,14 @@
       <section id="section-results" class="section">
         <div class="section-header">
           <h1>Results</h1>
-          <div class="filter-row">
-            <button class="filter-btn active" data-filter="all" onclick="filterResults('all')">All <span class="filter-count" id="fc-all"></span></button>
-            <button class="filter-btn" data-filter="success" onclick="filterResults('success')">Success <span class="filter-count" id="fc-success"></span></button>
-            <button class="filter-btn" data-filter="rejected" onclick="filterResults('rejected')">Rejected <span class="filter-count" id="fc-rejected"></span></button>
-            <button class="filter-btn" data-filter="region_skip" onclick="filterResults('region_skip')">Region-Locked <span class="filter-count" id="fc-region_skip"></span></button>
-            <button class="filter-btn" data-filter="ratelimited" onclick="filterResults('ratelimited')">Rate Limited <span class="filter-count" id="fc-ratelimited"></span></button>
+          <div class="results-controls">
+            <input type="text" id="results-search" class="code-input results-search" placeholder="Search code…" oninput="searchResults(this.value)">
+            <div class="filter-row">
+              <button class="filter-btn active" data-filter="all" onclick="filterResults('all')">All <span class="filter-count" id="fc-all"></span></button>
+              <button class="filter-btn" data-filter="success" onclick="filterResults('success')">Success <span class="filter-count" id="fc-success"></span></button>
+              <button class="filter-btn" data-filter="rejected" onclick="filterResults('rejected')">Rejected <span class="filter-count" id="fc-rejected"></span></button>
+              <button class="filter-btn" data-filter="region_skip" onclick="filterResults('region_skip')">Region-Locked <span class="filter-count" id="fc-region_skip"></span></button>
+            </div>
           </div>
         </div>
 

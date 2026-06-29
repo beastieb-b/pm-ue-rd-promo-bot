@@ -4,6 +4,7 @@ let stats = {};
 let processed = [];
 let allLogs = [];
 let activeFilter = 'all';
+let resultSearch = '';
 let eventSource = null;
 let liveLines = [];
 let currentSettings = { scanIntervalHours: 2, applyIntervalHours: 4 };
@@ -527,8 +528,20 @@ function renderQueue(queue) {
     return;
   }
 
+  // Show the queue in the order codes will actually be tried (mirrors the
+  // apply-run priority: digit-containing first, then confidence, then recency),
+  // so what you see matches what happens.
+  const ordered = [...queue].sort((a, b) => {
+    const A = typeof a === 'string' ? { code: a } : a;
+    const B = typeof b === 'string' ? { code: b } : b;
+    const sa = (/\d/.test(A.code) ? 1000 : 0) + (Number(A.confidenceScore) || 0);
+    const sb = (/\d/.test(B.code) ? 1000 : 0) + (Number(B.confidenceScore) || 0);
+    if (sb !== sa) return sb - sa;
+    return (B.lastSeenAt ? Date.parse(B.lastSeenAt) || 0 : 0) - (A.lastSeenAt ? Date.parse(A.lastSeenAt) || 0 : 0);
+  });
+
   el.innerHTML = '';
-  queue.forEach(entry => {
+  ordered.forEach((entry, i) => {
     const code = typeof entry === 'string' ? entry : entry.code;
     const meta = typeof entry === 'string' ? {} : entry;
     const row = document.createElement('div');
@@ -547,6 +560,7 @@ function renderQueue(queue) {
     const metaRow = document.createElement('div');
     metaRow.className = 'queue-meta';
     metaRow.innerHTML = [
+      i === 0 ? '<span class="meta-pill next-up">Next up</span>' : '',
       meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
       meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
       meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 maybe ${escapeHtml(meta.region || 'other area')} — will verify</span>`
@@ -577,13 +591,15 @@ function renderResults() {
 
   updateFilterCounts();
 
-  const data = activeFilter === 'all'
+  let data = activeFilter === 'all'
     ? processed
     : processed.filter(r => r.result === activeFilter);
+  if (resultSearch) data = data.filter(r => r.code.includes(resultSearch));
 
   if (!data.length) {
-    const name = { all: '', success: 'success ', rejected: 'rejected ', region_skip: 'region-locked ', ratelimited: 'rate-limited ' }[activeFilter] || '';
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No ${name}results yet</td></tr>`;
+    const name = { all: '', success: 'success ', rejected: 'rejected ', region_skip: 'region-locked ' }[activeFilter] || '';
+    const msg = resultSearch ? `No results matching "${escapeHtml(resultSearch)}"` : `No ${name}results yet`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">${msg}</td></tr>`;
     return;
   }
 
@@ -595,6 +611,7 @@ function renderResults() {
 
     const codeCell = document.createElement('td');
     codeCell.className = 'result-code';
+    codeCell.dataset.label = 'Code';
     codeCell.innerHTML = `
       <div class="result-code-stack">
         <button class="result-code-value copyable" title="Click to copy" onclick="copyCode('${escapeHtml(r.code)}')">${escapeHtml(r.code)}</button>
@@ -603,6 +620,7 @@ function renderResults() {
 
     const sourceCell = document.createElement('td');
     sourceCell.className = 'result-source';
+    sourceCell.dataset.label = 'Source';
     const sourceLink = r.commentUrl || r.sourceUrl;
     const sourceLabel = escapeHtml(r.sourceLabel || 'Manual');
     const labelHtml = sourceLink
@@ -614,6 +632,7 @@ function renderResults() {
     `;
 
     const resultCell = document.createElement('td');
+    resultCell.dataset.label = 'Result';
     const badge = document.createElement('span');
     badge.className = `result-badge ${cssToken(r.result)}`;
     badge.textContent = `${resultIcon(r.result)} ${resultLabel(r.result)}`;
@@ -621,6 +640,7 @@ function renderResults() {
 
     const detailCell = document.createElement('td');
     detailCell.className = 'result-detail';
+    detailCell.dataset.label = 'Details';
     const regionNote = r.result === 'region_skip'
       ? '<div class="result-submeta region-note">✓ Applied on Postmates · not counted toward total</div>'
       : '';
@@ -630,6 +650,7 @@ function renderResults() {
     `;
 
     const timeCell = document.createElement('td');
+    timeCell.dataset.label = 'When';
     timeCell.style.color = 'var(--label-3)';
     timeCell.style.fontSize = '12px';
     timeCell.style.whiteSpace = 'nowrap';
@@ -637,6 +658,7 @@ function renderResults() {
 
     const deleteCell = document.createElement('td');
     deleteCell.className = 'result-delete-cell';
+    deleteCell.dataset.label = '';
 
     // Let the user correct the verdict: a success they know is region-locked,
     // or a region-locked one that's actually usable here.
@@ -825,8 +847,16 @@ function handleSSE(data) {
         finishLiveCard('apply', 0, 0, false);
         break;
       }
+      if (!data.applied) {
+        // Nothing was tried — the queue was empty (don't say "0 worked").
+        showToast('Queue is empty — nothing to apply. Run "Check Sources" to find codes.');
+        setLastRun('apply', 'Nothing queued');
+        setRunning('apply', false);
+        finishLiveCard('apply', 0, 0, false);
+        break;
+      }
       const successes = (data.results || []).filter(r => r.result === 'success').length;
-      let toastMsg = successes ? `${successes} code${successes > 1 ? 's' : ''} worked! 🎉` : `Applied ${data.applied} codes — none worked this run`;
+      let toastMsg = successes ? `${successes} code${successes > 1 ? 's' : ''} worked! 🎉` : `Applied ${data.applied} code${data.applied > 1 ? 's' : ''} — none worked this run`;
       if (data.rateLimited) toastMsg += ' · Rate limited, remaining codes saved for next run';
       showToast(toastMsg);
       setLastRun('apply', successes > 0 ? `✅ ${successes} worked` : data.rateLimited ? '⏳ Rate limited' : `✅ ${data.applied} tried`);
@@ -1120,13 +1150,17 @@ async function addCode() {
       body: JSON.stringify({ code }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || `${code} isn't a valid promo code`, 'error');
+      return;
+    }
     if (data.added) {
       showToast(`Added ${code} to queue`);
       input.value = '';
       loadQueue();
       loadAll();
     } else {
-      showToast(`${code} is already in queue or processed`);
+      showToast(`${code} is already in the queue or already tried`);
     }
   } catch {
     showToast('Failed to add code', 'error');
@@ -1202,9 +1236,14 @@ function filterResults(filter) {
   renderResults();
 }
 
+function searchResults(value) {
+  resultSearch = (value || '').trim().toUpperCase();
+  renderResults();
+}
+
 // Update the per-filter counts so the user can see the breakdown at a glance.
 function updateFilterCounts() {
-  const counts = { all: processed.length, success: 0, rejected: 0, region_skip: 0, ratelimited: 0 };
+  const counts = { all: processed.length, success: 0, rejected: 0, region_skip: 0 };
   for (const r of processed) if (counts[r.result] !== undefined) counts[r.result] += 1;
   for (const key of Object.keys(counts)) {
     const el = document.getElementById('fc-' + key);
