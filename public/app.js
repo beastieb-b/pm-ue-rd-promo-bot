@@ -432,6 +432,28 @@ function toggleStep(id, isDone) {
   if (el) el.classList.toggle('open');
 }
 
+// Render one login card's tri-state status (true=ok, null=unverified, false=no).
+function renderLoginCard(loggedIn, badgeId, descId, btnId, name) {
+  const badge = document.getElementById(badgeId);
+  const desc = document.getElementById(descId);
+  const btn = document.getElementById(btnId);
+  if (badge) {
+    if (loggedIn === true) { badge.textContent = '✓ Logged In'; badge.style.background = 'var(--success-bg)'; badge.style.color = 'var(--success)'; }
+    else if (loggedIn === null) { badge.textContent = '? Unverified'; badge.style.background = 'var(--info-bg)'; badge.style.color = 'var(--info)'; }
+    else { badge.textContent = '⚠ Not Logged In'; badge.style.background = 'var(--warning-bg)'; badge.style.color = 'var(--warning)'; }
+  }
+  if (desc) {
+    desc.textContent = loggedIn === true
+      ? 'Session confirmed working.'
+      : loggedIn === null
+        ? "A saved session exists but hasn't been verified yet — it'll be confirmed on the next Apply Codes run."
+        : `Not logged in or session expired. Click the button to open Chrome and log into ${name}.`;
+  }
+  if (btn && document.activeElement !== btn) {
+    btn.textContent = loggedIn === true ? '🔄 Re-login' : `🔐 Log in to ${name}`;
+  }
+}
+
 function renderSettings() {
   const s = currentSettings;
 
@@ -450,39 +472,9 @@ function renderSettings() {
     haEl.value = (s.homeAliases || []).filter(a => a !== label).join(', ');
   }
 
-  // Login card — three states: true (confirmed), false (confirmed not), null (unverified)
-  const loggedIn = stats.loggedIn;
-  const badge = document.getElementById('login-status-badge');
-  const desc = document.getElementById('login-status-desc');
-  const setupBtn = document.getElementById('btn-setup');
-
-  if (badge) {
-    if (loggedIn === true) {
-      badge.textContent = '✓ Logged In';
-      badge.style.background = 'var(--success-bg)';
-      badge.style.color = 'var(--success)';
-    } else if (loggedIn === null) {
-      badge.textContent = '? Unverified';
-      badge.style.background = 'var(--info-bg)';
-      badge.style.color = 'var(--info)';
-    } else {
-      badge.textContent = '⚠ Not Logged In';
-      badge.style.background = 'var(--warning-bg)';
-      badge.style.color = 'var(--warning)';
-    }
-  }
-  if (desc) {
-    if (loggedIn === true) {
-      desc.textContent = 'Session confirmed working — codes are being applied automatically.';
-    } else if (loggedIn === null) {
-      desc.textContent = 'A saved session exists but hasn\'t been verified yet. It will be confirmed on the next Apply Codes run.';
-    } else {
-      desc.textContent = 'Not logged in or session expired. Click the button to open Chrome and log in.';
-    }
-  }
-  if (setupBtn) {
-    setupBtn.textContent = loggedIn === true ? '🔄 Re-login' : '🔐 Log in to Postmates';
-  }
+  // Login cards (Postmates + UberEats) — same tri-state rendering.
+  renderLoginCard(stats.loggedIn, 'login-status-badge', 'login-status-desc', 'btn-setup', 'Postmates');
+  renderLoginCard(stats.ueLoggedIn, 'ue-login-status-badge', 'ue-login-status-desc', 'btn-setup-ue', 'UberEats');
 
   // Reddit thread links
   const threadBadge = document.getElementById('thread-month-badge');
@@ -925,14 +917,20 @@ function handleSSE(data) {
       renderHealthWarning();
       break;
 
-    case 'setup_done':
+    case 'setup_done': {
       stats.loggedIn = data.loggedIn;
+      stats.ueLoggedIn = data.ueLoggedIn;
+      const isUE = data.target === 'ubereats';
+      const name = isUE ? 'UberEats' : 'Postmates';
+      const ok = isUE ? data.ueLoggedIn : data.loggedIn;
+      const btn = document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
+      if (btn) btn.disabled = false;
       renderSettings();
       renderSetupChecklist();
-      showToast(data.loggedIn ? 'Logged in successfully ✅' : 'Chrome closed — session not detected', data.loggedIn ? 'success' : 'error');
-      const setupBtn = document.getElementById('btn-setup');
-      if (setupBtn) { setupBtn.disabled = false; setupBtn.textContent = data.loggedIn ? '🔄 Re-login to Postmates' : '🔐 Log in to Postmates'; }
+      renderLoginBanner();
+      showToast(ok ? `${name} login successful ✅` : `Chrome closed — ${name} session not detected`, ok ? 'success' : 'error');
       break;
+    }
 
     case 'settings_updated':
       if (data.settings) {
@@ -1111,15 +1109,21 @@ function handleSelfTestDone(data) {
   showToast(data.ok ? 'Self-test passed — detection pipeline healthy ✅' : `Self-test failed: ${data.message || data.error}`, data.ok ? 'success' : 'error');
 }
 
-async function triggerSetup() {
-  const btn = document.getElementById('btn-setup');
+async function triggerSetup(target = 'postmates') {
+  const isUE = target === 'ubereats';
+  const name = isUE ? 'UberEats' : 'Postmates';
+  const btn = document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Opening Chrome...'; }
-  showToast('Opening Chrome for Postmates login — log in then close the window');
+  showToast(`Opening Chrome for ${name} login — log in then close the window`);
   try {
-    await fetch('/api/setup', { method: 'POST' });
+    await fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target }),
+    });
   } catch {
     showToast('Failed to open setup', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '🔐 Log in to Postmates'; }
+    if (btn) { btn.disabled = false; btn.textContent = `🔐 Log in to ${name}`; }
   }
 }
 

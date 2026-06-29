@@ -11,20 +11,23 @@ let _setupRunning = false;
 let _applyRunning = false;
 
 // Tracks actual login state based on real navigation results (not cookies)
-// null = unknown, true = confirmed working, false = confirmed not logged in
-// Load persisted session state so "Logged in" status survives daemon restarts.
-let _sessionValid = (() => {
+// null = unknown, true = confirmed working, false = confirmed not logged in.
+// Persisted so "Logged in" status survives daemon restarts. Tracks both
+// Postmates and UberEats sessions (UberEats needs its own login).
+let _sessionState = (() => {
   try {
     const data = JSON.parse(fs.readFileSync(cfg.SESSION_STATE_FILE, 'utf8'));
-    return data.sessionValid ?? null;
-  } catch { return null; }
+    return { sessionValid: data.sessionValid ?? null, ueSessionValid: data.ueSessionValid ?? null };
+  } catch { return { sessionValid: null, ueSessionValid: null }; }
 })();
 
-function getSessionValid() { return _sessionValid; }
-function setSessionValid(v) {
-  _sessionValid = v;
-  try { fs.writeFileSync(cfg.SESSION_STATE_FILE, JSON.stringify({ sessionValid: v })); } catch {}
+function persistSessionState() {
+  try { fs.writeFileSync(cfg.SESSION_STATE_FILE, JSON.stringify(_sessionState)); } catch {}
 }
+function getSessionValid() { return _sessionState.sessionValid; }
+function setSessionValid(v) { _sessionState.sessionValid = v; persistSessionState(); }
+function getUeSessionValid() { return _sessionState.ueSessionValid; }
+function setUeSessionValid(v) { _sessionState.ueSessionValid = v; persistSessionState(); }
 
 async function getBrowserContext(headless = true) {
   if (_context) return _context;
@@ -80,22 +83,26 @@ async function closeBrowser() {
 
 // ── First-run setup: open headed browser so user can log in ─────────────────
 
-async function setupLogin() {
+async function setupLogin({ target = 'postmates' } = {}) {
   if (_applyRunning) throw new Error('Code applier is running; try login again when it finishes');
   if (_setupRunning) throw new Error('Login setup is already running');
   _setupRunning = true;
-  console.log('\n🔐 Opening Postmates in Chrome for login...');
+  const isUE = target === 'ubereats';
+  const url = isUE ? 'https://www.ubereats.com/' : 'https://postmates.com';
+  const name = isUE ? 'UberEats' : 'Postmates';
+  console.log(`\n🔐 Opening ${name} in Chrome for login...`);
   console.log('   Please log in, then close the browser window when done.\n');
 
   try {
     const page = await getPage(false); // headed
-    await page.goto('https://postmates.com', { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     // Wait until user closes the browser
     await new Promise(resolve => page.context().on('close', resolve));
     _context = null;
-    setSessionValid(null); // reset — will be confirmed on next apply run
-    console.log('\n✅ Browser closed — login session saved.\n');
+    // reset the relevant session — confirmed on the next apply run
+    if (isUE) setUeSessionValid(null); else setSessionValid(null);
+    console.log(`\n✅ Browser closed — ${name} login session saved.\n`);
   } finally {
     _setupRunning = false;
   }
@@ -582,4 +589,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid, testDetection };
+module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, testDetection };

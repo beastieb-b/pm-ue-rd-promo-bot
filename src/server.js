@@ -72,9 +72,18 @@ app.get('/api/stats', (req, res) => {
     : cookieExists ? null   // cookie exists but unverified
     : false;                // no cookie at all
 
+  // Same tri-state logic for the separate UberEats session.
+  const ueSessionValid = postmates.getUeSessionValid();
+  const ueCookieExists = setup.steps.find(s => s.id === 'ubereats-login')?.done;
+  const ueLoggedIn = ueSessionValid === false ? false
+    : ueSessionValid === true ? true
+    : ueCookieExists ? null
+    : false;
+
   res.json({
     ...state.getStats(),
     loggedIn,
+    ueLoggedIn,
     settings: settings.load(),
     setup,
     scanStatus: _getScanStatusFn ? _getScanStatusFn() : null,
@@ -196,11 +205,17 @@ app.post('/api/self-test', async (req, res) => {
 
 app.post('/api/setup', async (req, res) => {
   const postmates = require('./postmates');
+  const target = req.body && req.body.target === 'ubereats' ? 'ubereats' : 'postmates';
   res.json({ started: true });
   try {
-    await postmates.setupLogin();
+    await postmates.setupLogin({ target });
     settings.invalidateSetupStatus();
-    broadcast({ type: 'setup_done', loggedIn: settings.isLoggedIn() });
+    broadcast({
+      type: 'setup_done',
+      target,
+      loggedIn: settings.isLoggedIn(),
+      ueLoggedIn: settings.isLoggedInUberEats(),
+    });
   } catch (err) {
     broadcast({ type: 'error', message: `Setup failed: ${err.message}` });
   }

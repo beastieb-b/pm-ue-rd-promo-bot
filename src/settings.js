@@ -149,6 +149,24 @@ function isLoggedIn() {
   }
 }
 
+// UberEats needs its own login session (the Uber SSO csid doesn't carry to
+// ubereats.com). Authenticated ubereats.com sets a 'sid' cookie that the
+// logged-out/guest session does not. NOTE: the exact marker is confirmed during
+// post-login discovery; adjust the cookie name here if it differs.
+function isLoggedInUberEats() {
+  const cookiePath = path.join(cfg.BROWSER_PROFILE_DIR, 'Default', 'Cookies');
+  if (!fs.existsSync(cookiePath)) return false;
+  try {
+    const result = execSync(
+      `sqlite3 "${cookiePath}" "SELECT COUNT(*) FROM cookies WHERE host_key LIKE '%ubereats%' AND name='sid';"`,
+      { timeout: 3000, stdio: ['pipe', 'pipe', 'ignore'] }
+    ).toString().trim();
+    return parseInt(result) > 0;
+  } catch {
+    return false;
+  }
+}
+
 function hasOldCronJob() {
   try {
     const crontab = execSync('crontab -l 2>/dev/null', { timeout: 3000 }).toString();
@@ -169,6 +187,7 @@ function getSetupStatus() {
   }
 
   const loggedIn = isLoggedIn();
+  const ueLoggedIn = isLoggedInUberEats();
   const oldCronActive = hasOldCronJob();
   const serviceInstalled = isServiceInstalled();
 
@@ -181,6 +200,15 @@ function getSetupStatus() {
       hint: 'Click the button in Settings to open Chrome. Log into Postmates, then close the window.',
       done: loggedIn,
       required: true,
+    },
+    {
+      id: 'ubereats-login',
+      label: 'Log into UberEats',
+      description: 'Codes rejected on Postmates are retried on UberEats, which needs its own login session.',
+      command: 'Settings → Log in to UberEats button',
+      hint: 'Click the button in Settings to open Chrome. Log into UberEats, then close the window.',
+      done: ueLoggedIn,
+      required: false,
     },
     {
       id: 'old-cron',
@@ -218,5 +246,5 @@ function invalidateSetupStatus() {
 module.exports = {
   load, save, hoursToCron, nextRunFromInterval,
   normalizeInterval, SCAN_INTERVALS, APPLY_INTERVALS,
-  isLoggedIn, hasOldCronJob, isServiceInstalled, getSetupStatus, invalidateSetupStatus, DEFAULTS,
+  isLoggedIn, isLoggedInUberEats, hasOldCronJob, isServiceInstalled, getSetupStatus, invalidateSetupStatus, DEFAULTS,
 };

@@ -274,8 +274,25 @@
               <div class="settings-label">Chrome Session</div>
               <div class="settings-desc" id="login-status-desc">Checking for saved session...</div>
             </div>
-            <button class="btn btn-primary" id="btn-setup" onclick="triggerSetup()">
+            <button class="btn btn-primary" id="btn-setup" onclick="triggerSetup('postmates')">
               🔐 Log in to Postmates
+            </button>
+          </div>
+        </div>
+
+        <!-- UberEats Login card (separate session — codes rejected on Postmates retry here) -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>UberEats Login</h3>
+            <span class="card-badge" id="ue-login-status-badge">Checking...</span>
+          </div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label">Chrome Session</div>
+              <div class="settings-desc" id="ue-login-status-desc">Checking for saved session...</div>
+            </div>
+            <button class="btn btn-primary" id="btn-setup-ue" onclick="triggerSetup('ubereats')">
+              🔐 Log in to UberEats
             </button>
           </div>
         </div>
