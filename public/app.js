@@ -279,22 +279,27 @@ function renderScanStatus() {
   }
 
   dot.className = 'scan-dot active';
-  label.textContent = `Auto-scan ON · every ${s.intervalHours}h`;
+  label.textContent = 'Automation ON';
 
+  // Show BOTH cadences so it's clear auto-scan AND auto-apply are running.
   const parts = [];
-  if (s.lastScanAt) {
-    parts.push(`<span class="scan-meta-item">Last: <strong>${timeAgo(new Date(s.lastScanAt))}</strong></span>`);
-  }
+  parts.push(`<span class="scan-meta-item">Scan every <strong>${formatInterval(s.intervalHours)}</strong></span>`);
+  parts.push(`<span class="scan-meta-item">Apply every <strong>${formatInterval(currentSettings.applyIntervalHours)}</strong></span>`);
   if (s.nextScanAt) {
-    const next = new Date(s.nextScanAt);
-    const diff = next - Date.now();
-    if (diff > 0) {
-      parts.push(`<span class="scan-meta-item">Next in: <strong>${formatDuration(diff)}</strong></span>`);
-    } else {
-      parts.push(`<span class="scan-meta-item">Next: <strong>any moment</strong></span>`);
-    }
+    const diff = new Date(s.nextScanAt) - Date.now();
+    parts.push(`<span class="scan-meta-item">Next scan <strong>${diff > 0 ? 'in ' + formatDuration(diff) : 'any moment'}</strong></span>`);
+  }
+  if (s.lastApplyAt) {
+    parts.push(`<span class="scan-meta-item">Last apply <strong>${timeAgo(new Date(s.lastApplyAt))}</strong></span>`);
   }
   meta.innerHTML = parts.join('');
+}
+
+// Format an interval in hours as a short label: 0.5 → "30m", 1 → "1h", 2 → "2h".
+function formatInterval(hours) {
+  const h = Number(hours);
+  if (!isFinite(h) || h <= 0) return '—';
+  return h < 1 ? `${Math.round(h * 60)}m` : `${h}h`;
 }
 
 function timeAgo(date) {

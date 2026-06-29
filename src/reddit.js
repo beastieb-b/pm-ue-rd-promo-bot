@@ -6,7 +6,6 @@ const { detectRegionRestriction } = require('./region');
 const SOURCE_LABELS = {
   reddit_postmates: 'Reddit · Postmates',
   reddit_ubereats: 'Reddit · UberEATS',
-  slickdeals_postmates: 'Slickdeals · Postmates',
 };
 
 function getCheerio() {
@@ -88,14 +87,6 @@ function setSourceStatus(sourceKey, updates) {
     ...updates,
     lastCheckedAt: new Date().toISOString(),
   });
-}
-
-function parseCommentSignals(text) {
-  const normalized = normalizeText(text).toLowerCase();
-  return {
-    worked: /\b(worked|working|verified|success)\b/.test(normalized),
-    dead: /\b(dead|expired|doesn['’]?t work|not working|invalid)\b/.test(normalized),
-  };
 }
 
 // ── Thread detection via RSS ────────────────────────────────────────────────
@@ -282,128 +273,6 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   return { threadId: newestEntry.id, commentsScanned: comments.length, codesFound: allCodes.size, newCodes: newCodes.length, queued: added };
 }
 
-function parseExpiry(text) {
-  const match = text.match(/Expires?\s+(\d{2})-(\d{2})-(\d{4})/i);
-  if (!match) return null;
-  const [, mm, dd, yyyy] = match;
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function parseSlickdealsThread(body, url) {
-  const cheerio = getCheerio();
-  const $ = cheerio.load(body);
-
-  // Skip expired deals — Slickdeals marks them with a visible alert bar + badge
-  if ($('.expiredDealAlertBar, [class*="dealCardBadge--expired"]').length) return null;
-
-  // Extract code from the meta description attribute — avoids text-node concatenation
-  // bugs (e.g. "BEACHRUNCommunity") that happen when using $('body').text()
-  const metaDesc = $('meta[name="description"]').attr('content') || '';
-  const codeMatch = metaDesc.match(/Use promo code:\s*([A-Z0-9_-]{4,32})\b/i)
-    || metaDesc.match(/promo code[:\s]+([A-Z0-9_-]{4,32})\b/i);
-  const code = state.normalizeCode(codeMatch?.[1] || '');
-
-  const pageText = normalizeText($('body').text());
-  const title = normalizeText($('h1').first().text()) || normalizeText($('title').text());
-  const existingUser = !/\b(new customer|new users?|first order|initial purchase)\b/i.test(pageText);
-  const regionMatch = pageText.match(/\b(Los Angeles|California|NYC|New York|Chicago|Seattle|Dallas|Houston|Miami)\b/i);
-  const region = regionMatch ? regionMatch[1] : null;
-  const expiresAt = parseExpiry(pageText);
-
-  // Collect Slickdeals user comments for worked/dead signals
-  const comments = [];
-  $('[class*="comment"], [class*="Comment"]').each((_, el) => {
-    const text = normalizeText($(el).text());
-    if (text.length > 10) comments.push(text);
-  });
-
-  let worked = 0;
-  let dead = 0;
-  for (const comment of comments.slice(0, 50)) {
-    const signal = parseCommentSignals(comment);
-    if (signal.worked) worked += 1;
-    if (signal.dead) dead += 1;
-  }
-
-  if (!code || !existingUser) return null;
-  const statusHint = dead > worked ? 'Possibly dead' : worked > 0 ? 'Community verified' : 'Public code';
-  const statusNote = dead > worked
-    ? `${dead} negative comments detected`
-    : worked > 0
-      ? `${worked} positive community signal${worked === 1 ? '' : 's'}`
-      : 'No strong comment signal yet';
-
-  return buildCodeEntry(code, {
-    sourceKey: 'slickdeals_postmates',
-    sourceUrl: url,
-    sourceTitle: title,
-    statusHint,
-    statusNote,
-    expiresAt,
-    region,
-    lastSeenAt: new Date().toISOString(),
-    worked,
-    dead,
-    existingUser,
-    targeted: Boolean(region),
-    hasExpiry: Boolean(expiresAt),
-  });
-}
-
-async function scanSlickdeals(onProgress) {
-  const sourceKey = 'slickdeals_postmates';
-  const label = SOURCE_LABELS[sourceKey];
-  // Search for active (non-expired) deal threads that mention Postmates promo codes.
-  // The /promo-codes/postmates/ page only has generic %-off cards with no code strings.
-  const searchUrl = 'https://slickdeals.net/newsearch.php?q=postmates+promo+code&searcharea=deals&searchin=first_word&sort=newest&hideExpired=1';
-  onProgress?.({ source: label, step: 'fetching' });
-  setSourceStatus(sourceKey, { status: 'checking', note: 'Searching for active Postmates deals', sourceUrl: searchUrl });
-
-  try {
-    const { status, body } = await fetchUrl(searchUrl);
-    if (status !== 200) throw new Error(`Slickdeals returned ${status}`);
-    const cheerio = getCheerio();
-    const $ = cheerio.load(body);
-    const links = new Map();
-    $('a[href*="/f/"]').each((_, el) => {
-      const href = $(el).attr('href');
-      const text = normalizeText($(el).text());
-      if (!href || !text) return;
-      const absolute = href.startsWith('http') ? href : `https://slickdeals.net${href}`;
-      // Deduplicate by path (strip query params)
-      const key = absolute.split('?')[0];
-      if (!links.has(key) && text.length > 10) links.set(key, text);
-    });
-
-    const candidates = [];
-    for (const [url, text] of [...links.entries()].slice(0, 4)) {
-      const thread = await fetchUrl(url);
-      if (thread.status !== 200) continue;
-      const entry = parseSlickdealsThread(thread.body, url);
-      if (entry) candidates.push(entry);
-      onProgress?.({ source: label, step: 'source_item', message: text });
-    }
-
-    const added = state.addToQueue(candidates);
-    setSourceStatus(sourceKey, {
-      status: 'ok',  // scan completed successfully regardless of whether codes were found
-      note: candidates.length
-        ? `Found ${candidates.length} code candidate${candidates.length === 1 ? '' : 's'}`
-        : links.size > 0 ? `${links.size} deal${links.size === 1 ? '' : 's'} checked — all expired or new-user only` : 'No active Postmates deals posted yet',
-      usableCodes: candidates.length,
-      queued: added,
-      sourceUrl: searchUrl,
-    });
-    onProgress?.({ source: label, step: 'done', commentsScanned: 0, newCodes: candidates.length, queued: added });
-    return { codesFound: candidates.length, newCodes: candidates.length, queued: added };
-  } catch (err) {
-    setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0, sourceUrl: searchUrl });
-    // Don't broadcast an error progress event — supplemental source blocks are expected.
-    // The source status panel already reflects it.
-    return { error: `${label} scan failed: ${err.message}` };
-  }
-}
-
 async function runRedditCheck({ onProgress } = {}) {
   state.appendLog({ type: 'reddit_check_start' });
 
@@ -433,9 +302,7 @@ async function runRedditCheck({ onProgress } = {}) {
     onProgress,
   });
 
-  const slickdeals = await scanSlickdeals(onProgress);
-
-  const scans = [pm, ue, slickdeals];
+  const scans = [pm, ue];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);
   const totalQueued = scans.reduce((sum, entry) => sum + (entry.queued || 0), 0);
   const coreErrors = [pm.error, ue.error].filter(Boolean);
@@ -448,7 +315,6 @@ async function runRedditCheck({ onProgress } = {}) {
     queued: totalQueued,
     postmates: pm,
     ubereats: ue,
-    slickdeals,
     error: coreErrors.length > 0 ? coreErrors.join('; ') : null,
   };
 }
@@ -458,5 +324,4 @@ module.exports = {
   detectCurrentThread,
   detectUberEatsThread,
   fetchComments,
-  parseSlickdealsThread,
 };
