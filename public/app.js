@@ -150,11 +150,24 @@ function renderOverview() {
     badge.style.display = stats.queueCount ? '' : 'none';
   }
 
+  // Show BOTH connected monthly threads (Postmates + UberEATS), not just one.
   const tb = document.getElementById('thread-badge');
-  if (stats.threadId) {
-    tb.textContent = `Thread: ${stats.threadId} · ${formatMonth(stats.threadMonth)}`;
-  } else {
-    tb.textContent = 'No thread loaded — run a source scan';
+  if (tb) {
+    const subs = [];
+    if (stats.threadId) subs.push('r/postmates');
+    if (stats.ueThreadId) subs.push('r/UberEATS');
+    const month = formatMonth(stats.threadMonth || stats.ueThreadMonth);
+    if (subs.length) {
+      tb.textContent = `${subs.join(' + ')}${month ? ' · ' + month : ''}`;
+      // Tooltip with the exact thread IDs for verification.
+      const ids = [];
+      if (stats.threadId) ids.push(`r/postmates: ${stats.threadId}`);
+      if (stats.ueThreadId) ids.push(`r/UberEATS: ${stats.ueThreadId}`);
+      tb.title = ids.join('  ·  ');
+    } else {
+      tb.textContent = 'No thread loaded — run a source scan';
+      tb.title = '';
+    }
   }
 
   const successEl = document.getElementById('success-list');
