@@ -525,7 +525,6 @@ function renderQueue(queue) {
     metaRow.className = 'queue-meta';
     metaRow.innerHTML = [
       meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
-      meta.confidenceLabel ? `<span class="meta-pill confidence confidence-${cssToken(meta.confidenceLabel.toLowerCase())}">${escapeHtml(meta.confidenceLabel)} confidence</span>` : '',
       meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
       meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 maybe ${escapeHtml(meta.region || 'other area')} — will verify</span>`
         : meta.region ? `<span class="meta-pill">📍 ${escapeHtml(meta.region)}</span>` : '',
@@ -573,7 +572,6 @@ function renderResults() {
     codeCell.innerHTML = `
       <div class="result-code-stack">
         <button class="result-code-value copyable" title="Click to copy" onclick="copyCode('${escapeHtml(r.code)}')">${escapeHtml(r.code)}</button>
-        ${r.confidenceLabel ? `<div class="result-submeta">${escapeHtml(r.confidenceLabel)} confidence</div>` : ''}
       </div>
     `;
 
