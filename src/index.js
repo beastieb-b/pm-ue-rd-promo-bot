@@ -64,14 +64,17 @@ const scanStatus = {
   lastScanError: null,
   nextScanAt: null,
   intervalHours: 2,
+  applyIntervalHours: 4,
   applyRunning: false,
   applyStartedAt: null,   // when the current apply run began
   applyCurrentCode: null, // code currently being tried
   lastApplyAt: null,
+  nextApplyAt: null,
 };
 
 function updateNextScanTime() {
   scanStatus.nextScanAt = settings.nextRunFromInterval(scanStatus.intervalHours);
+  scanStatus.nextApplyAt = settings.nextRunFromInterval(scanStatus.applyIntervalHours);
 }
 
 // Exposed so server.js can include it in /api/stats
@@ -144,6 +147,7 @@ async function runApply(options = {}) {
       console.log(`  Applied: ${result.applied} | Successes: ${successes}`);
     }
     scanStatus.lastApplyAt = new Date();
+    updateNextScanTime(); // refresh next-apply (and next-scan) projections
     scanStatus.applyRunning = false;
     scanStatus.applyCurrentCode = null;
     if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
@@ -177,6 +181,7 @@ function reschedule(newSettings) {
 
   scanStatus.active = true;
   scanStatus.intervalHours = s.scanIntervalHours;
+  scanStatus.applyIntervalHours = s.applyIntervalHours;
   updateNextScanTime();
 
   console.log(`📅 Reddit scan: every ${s.scanIntervalHours}h (${redditCron})`);

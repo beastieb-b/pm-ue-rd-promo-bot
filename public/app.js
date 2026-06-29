@@ -289,8 +289,9 @@ function renderScanStatus() {
     const diff = new Date(s.nextScanAt) - Date.now();
     parts.push(`<span class="scan-meta-item">Next scan <strong>${diff > 0 ? 'in ' + formatDuration(diff) : 'any moment'}</strong></span>`);
   }
-  if (s.lastApplyAt) {
-    parts.push(`<span class="scan-meta-item">Last apply <strong>${timeAgo(new Date(s.lastApplyAt))}</strong></span>`);
+  if (s.nextApplyAt) {
+    const diff = new Date(s.nextApplyAt) - Date.now();
+    parts.push(`<span class="scan-meta-item">Next apply <strong>${diff > 0 ? 'in ' + formatDuration(diff) : 'any moment'}</strong></span>`);
   }
   meta.innerHTML = parts.join('');
 }
