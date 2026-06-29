@@ -135,6 +135,11 @@ function renderOverview() {
     let text = n ? `across ${n} code${n !== 1 ? 's' : ''}` : 'no codes yet';
     const locked = stats.regionLockedCount ?? 0;
     if (locked) text += ` · ${locked} region-locked excluded`;
+    // How much of the total came from the UberEats fallback.
+    const ueSaved = (stats.successList || [])
+      .filter(i => /ubereats/i.test(i.detail || ''))
+      .reduce((acc, i) => { const m = String(i.detail).match(/\$\s*(\d+(?:\.\d+)?)/); return acc + (m ? parseFloat(m[1]) : 0); }, 0);
+    if (ueSaved > 0) text += ` · ${formatMoney(ueSaved)} on UberEats`;
     const last = stats.savedLastMonth;
     if (typeof last === 'number' && (saved || last)) {
       const delta = saved - last;
@@ -187,8 +192,9 @@ function renderOverview() {
     successEl.innerHTML = successItems.map(item => {
       const amount = chipAmount(item.detail);
       const valuePart = amount ? `<span class="success-chip-value">${escapeHtml(amount)}</span>` : '';
+      const uePart = /ubereats/i.test(item.detail || '') ? '<span class="platform-tag">UberEats</span>' : '';
       return `<button class="success-chip" title="Click to copy ${escapeHtml(item.code)}" onclick="copyCode('${escapeHtml(item.code)}')">
-        <span class="success-chip-code">${escapeHtml(item.code)}</span>${valuePart}
+        <span class="success-chip-code">${escapeHtml(item.code)}</span>${valuePart}${uePart}
       </button>`;
     }).join('');
   } else {
@@ -234,8 +240,9 @@ function renderRegionLocked() {
     const { amount, location } = parseRegionDetail(item.detail);
     const amt = amount ? `<span class="region-chip-amt">${escapeHtml(amount)}</span>` : '';
     const loc = location ? `<span class="region-chip-loc">📍 ${escapeHtml(location)}</span>` : '';
+    const ue = /ubereats/i.test(item.detail || '') ? '<span class="platform-tag">UberEats</span>' : '';
     return `<button class="region-chip" title="Click to copy ${escapeHtml(item.code)}" onclick="copyCode('${escapeHtml(item.code)}')">
-      <span class="region-chip-code">${escapeHtml(item.code)}</span>${amt}${loc}
+      <span class="region-chip-code">${escapeHtml(item.code)}</span>${amt}${loc}${ue}
     </button>`;
   }).join('');
 }
@@ -260,8 +267,9 @@ function parseRegionDetail(detail) {
 // otherwise apply runs silently fail and the only sign is in Settings.
 function renderLoginBanner() {
   const banner = document.getElementById('login-banner');
-  if (!banner) return;
-  banner.style.display = stats.loggedIn === false ? 'flex' : 'none';
+  if (banner) banner.style.display = stats.loggedIn === false ? 'flex' : 'none';
+  const ueBanner = document.getElementById('ue-login-banner');
+  if (ueBanner) ueBanner.style.display = stats.ueLoggedIn === false ? 'flex' : 'none';
 }
 
 function renderScanStatus() {
@@ -661,21 +669,31 @@ function renderResults() {
       <div class="result-submeta">${escapeHtml(r.statusHint || r.sourceTitle || '—')}</div>
     `;
 
+    const onUE = r.appliedOn === 'ubereats';
     const resultCell = document.createElement('td');
     resultCell.dataset.label = 'Result';
     const badge = document.createElement('span');
     badge.className = `result-badge ${cssToken(r.result)}`;
     badge.textContent = `${resultIcon(r.result)} ${resultLabel(r.result)}`;
     resultCell.appendChild(badge);
+    // Where it was applied (Postmates vs UberEats) — distinct from Source.
+    if (onUE && (r.result === 'success' || r.result === 'region_skip')) {
+      const tag = document.createElement('span');
+      tag.className = 'platform-tag';
+      tag.textContent = 'UberEats';
+      resultCell.appendChild(tag);
+    }
 
     const detailCell = document.createElement('td');
     detailCell.className = 'result-detail';
     detailCell.dataset.label = 'Details';
     const regionNote = r.result === 'region_skip'
-      ? '<div class="result-submeta region-note">✓ Applied on Postmates · not counted toward total</div>'
+      ? `<div class="result-submeta region-note">✓ Applied on ${onUE ? 'UberEats' : 'Postmates'} · not counted toward total</div>`
       : '';
+    // The "· UberEats" suffix is shown as the platform tag instead, so strip it here.
+    const detailText = String(r.detail || '—').replace(/\s*·\s*UberEats\s*$/i, '');
     detailCell.innerHTML = `
-      <div>${escapeHtml(r.detail || '—')}</div>
+      <div>${escapeHtml(detailText)}</div>
       ${regionNote}
     `;
 
@@ -766,6 +784,7 @@ function eventLabel(type) {
     rate_limited: 'Rate limited',
     detection_health_warning: 'Health warning',
     self_test: 'Self-test',
+    ubereats_fallback: 'UberEats fallback',
   }[type] || type;
 }
 
@@ -1004,16 +1023,20 @@ function appendLiveLog(data) {
   const log = document.getElementById('live-log');
   let cls = '', msg = '';
 
+  const where = data.platform === 'ubereats' ? ' on UberEats' : '';
   if (data.status === 'trying') {
     msg = `→ Trying ${data.code}...`;
+  } else if (data.status === 'trying_ubereats') {
+    msg = `↪ ${data.code} rejected on Postmates — trying UberEats...`;
+    cls = 'waiting';
   } else if (data.status === 'success') {
-    msg = `✅ ${data.code} — SUCCESS${data.detail ? ': ' + data.detail : ''}`;
+    msg = `✅ ${data.code} — SUCCESS${where}${data.detail ? ': ' + data.detail : ''}`;
     cls = 'success';
   } else if (data.status === 'rejected') {
-    msg = `❌ ${data.code} — rejected`;
+    msg = `❌ ${data.code} — rejected${where}`;
     cls = 'error';
   } else if (data.status === 'region_skip') {
-    msg = `📍 ${data.code} — skipped (${data.detail || 'region locked'})`;
+    msg = `📍 ${data.code} — skipped${where} (${data.detail || 'region locked'})`;
     cls = 'waiting';
   } else if (data.status === 'ratelimited') {
     msg = `⏳ Rate limited — stopping run`;

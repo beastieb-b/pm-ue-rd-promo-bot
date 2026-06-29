@@ -29,6 +29,24 @@ function setSessionValid(v) { _sessionState.sessionValid = v; persistSessionStat
 function getUeSessionValid() { return _sessionState.ueSessionValid; }
 function setUeSessionValid(v) { _sessionState.ueSessionValid = v; persistSessionState(); }
 
+// Per-platform apply config. Postmates and UberEats share the same Uber feed
+// promo modal, so applyCode() works for both — only the URL, the logged-in
+// domain check, and which session flag to set differ.
+const PLATFORMS = {
+  postmates: {
+    name: 'Postmates',
+    promoUrl: cfg.PROMO_URL,
+    onDomain: (url) => url.includes('postmates.com') && !/\/login|\/signin/.test(url),
+    setValid: setSessionValid,
+  },
+  ubereats: {
+    name: 'UberEats',
+    promoUrl: cfg.UBEREATS_PROMO_URL,
+    onDomain: (url) => url.includes('ubereats.com') && !/\/login|\/signin|auth\.uber\.com/.test(url),
+    setValid: setUeSessionValid,
+  },
+};
+
 async function getBrowserContext(headless = true) {
   if (_context) return _context;
 
@@ -274,22 +292,21 @@ async function dismissNoInputModal(page) {
   return true;
 }
 
-async function applyCode(page, code) {
+async function applyCode(page, code, platform = 'postmates') {
+  const plat = PLATFORMS[platform] || PLATFORMS.postmates;
   // Navigate to promo modal URL.
   // First load often redirects to mod=messagingInterstitial ("what's new" popup)
   // instead of the promos modal, so we load, dismiss, then load again.
-  await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.goto(plat.promoUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
   await dismissPopups(page);
 
-  // Check if we got redirected away from Postmates entirely (not logged in)
-  const url = page.url();
-  const onPostmates = url.includes('postmates.com') && !url.includes('/login') && !url.includes('/signin');
-  if (!onPostmates) {
-    setSessionValid(false);
-    return { result: 'not_logged_in', detail: 'Redirected — use Settings → Log in to Postmates' };
+  // Check if we got redirected away from the platform entirely (not logged in)
+  if (!plat.onDomain(page.url())) {
+    plat.setValid(false);
+    return { result: 'not_logged_in', detail: `Redirected — use Settings → Log in to ${plat.name}` };
   }
-  setSessionValid(true);
+  plat.setValid(true);
 
   // Scope to dialogs that contain an input so we never grab a cookie banner or
   // address confirmation modal that happens to appear at the same time.
@@ -303,7 +320,7 @@ async function applyCode(page, code) {
   let modalOpen = false;
   for (let attempt = 0; attempt < 3 && !modalOpen; attempt++) {
     if (attempt > 0) {
-      await page.goto(cfg.PROMO_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.goto(plat.promoUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await page.waitForTimeout(2500);
     }
     await dismissPopups(page);
@@ -505,6 +522,37 @@ async function runApplyCodes(options = {}) {
           await page.waitForTimeout(20_000); // 20s cooldown between transient failures
         }
         continue;
+      }
+
+      // UberEats fallback: a code rejected on Postmates for any reason EXCEPT
+      // "Code expired" may be a valid UberEats code (many come from r/UberEATS).
+      // Retry it on UberEats using the same modal/detection + rate handling.
+      if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired') {
+        if (onProgress) onProgress({ code, status: 'trying_ubereats' });
+        state.appendLog({ type: 'ubereats_fallback', code, postmates_detail: applyResult.detail });
+        let ue;
+        try {
+          ue = await applyCode(page, code, 'ubereats');
+        } catch (err) {
+          ue = { result: 'error', detail: err.message.slice(0, 100) };
+        }
+        state.appendLog({ type: 'code_result', code, result: ue.result, detail: ue.detail, platform: 'ubereats' });
+        if (onProgress) onProgress({ code, status: ue.result, detail: ue.detail, platform: 'ubereats' });
+
+        if (ue.result === 'ratelimited') {
+          rateLimited = true;
+          const remaining = pending.slice(pending.indexOf(code));
+          state.appendLog({ type: 'rate_limited', code, codes_preserved: remaining.length, platform: 'ubereats' });
+          if (onProgress) onProgress({ code, status: 'rate_limited_stop', preserved: remaining.length });
+          break;
+        }
+        if (ue.result === 'success' || ue.result === 'region_skip') {
+          // Worked (or region-locked) on UberEats — relabel and tag the platform.
+          applyResult = { result: ue.result, detail: `${ue.detail} · UberEats` };
+          state.mergeCodeMeta(code, { appliedOn: 'ubereats' });
+          results[results.length - 1] = { code, ...applyResult };
+        }
+        // else: also failed on UberEats → keep the original Postmates rejection.
       }
 
       // Permanent results (success / rejected) — mark and remove from queue

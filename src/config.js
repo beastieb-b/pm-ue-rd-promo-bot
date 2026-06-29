@@ -31,6 +31,9 @@ module.exports = {
   MAX_CODES_PER_RUN: 5,
   CODE_WAIT_MS: 2 * 60 * 1000,         // 2 minutes between codes
   PROMO_URL: 'https://postmates.com/feed?diningMode=DELIVERY&mod=promos&ps=1',
+  // UberEats uses the same Uber feed promo modal as Postmates (separate login).
+  // Codes rejected on Postmates (except "Code expired") are retried here.
+  UBEREATS_PROMO_URL: 'https://www.ubereats.com/feed?diningMode=DELIVERY&mod=promos&ps=1',
 
   // Dashboard — use PORT env var if set (for preview panel), else 8766.
   // Bind to 0.0.0.0 so the dashboard is reachable from other devices on the

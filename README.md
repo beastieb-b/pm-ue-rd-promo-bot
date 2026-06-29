@@ -39,6 +39,10 @@ total** so the number stays honest.
 4. **Classify & record** — `success` (with the discount), `rejected` (with the
    reason), `region_skip` (applied but locked to a non-home city), `ratelimited`
    (stops the run, keeps codes queued), or transient `error` (retried next run).
+5. **UberEats fallback** — if a code is rejected on Postmates for any reason
+   **except "Code expired"**, it's retried on **UberEats** (same Uber promo
+   modal, needs its own login). A win there counts toward your savings but is
+   clearly labeled "UberEats" in the dashboard.
 
 ---
 
@@ -66,6 +70,9 @@ npm run setup
 # 4. Install the background service (runs automatically at login)
 npm run install-service
 ```
+
+Also log into **UberEats** from the dashboard (Settings → **Log in to UberEats**)
+so the rejection fallback can apply codes there too — it's a separate session.
 
 Then open the dashboard at **http://localhost:8766** and finish any remaining
 items in the Setup checklist.
