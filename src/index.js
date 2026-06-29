@@ -9,6 +9,17 @@ const reddit = require('./reddit');
 const postmates = require('./postmates');
 const server = require('./server');
 
+// Prefix every console line with an ISO timestamp so the daemon logs
+// (data/daemon-error.log / daemon-out.log) are dated — old entries can no
+// longer be mistaken for recent ones.
+(() => {
+  const stamp = () => `[${new Date().toISOString()}]`;
+  const log = console.log.bind(console);
+  const err = console.error.bind(console);
+  console.log = (...a) => log(stamp(), ...a);
+  console.error = (...a) => err(stamp(), ...a);
+})();
+
 state.ensureDirs();
 
 const args = process.argv.slice(2);
@@ -89,7 +100,7 @@ async function runReddit() {
   redditRunning = true;
   scanStatus.lastScanError = null;
   try {
-    console.log(`[${new Date().toLocaleTimeString()}] Running Reddit check...`);
+    console.log('Running Reddit check...');
     const result = await reddit.runRedditCheck({
       onProgress: (p) => server.broadcast({ type: 'reddit_progress', ...p }),
     });
@@ -131,7 +142,7 @@ async function runApply(options = {}) {
   // Let any open dashboard know a run just started (covers cron-triggered runs).
   server.broadcast({ type: 'apply_started', scanStatus });
   try {
-    console.log(`[${new Date().toLocaleTimeString()}] Running code applier...`);
+    console.log('Running code applier...');
     const result = await postmates.runApplyCodes({
       ...options,
       onProgress: (u) => {
@@ -196,19 +207,21 @@ server.registerTriggers(runReddit, runApply, reschedule, getScanStatus);
 async function main() {
   console.log('🍔 Postmates Promo Daemon starting...');
 
-  // Trim daemon-error.log to the last 1000 lines whenever it grows past 1200.
-  // launchd opens the file with O_APPEND before exec, so writes always go to
-  // the real end — trimming the content at startup is safe.
-  try {
-    const errorLog = path.join(cfg.DATA_DIR, 'daemon-error.log');
-    if (fs.existsSync(errorLog)) {
-      const lines = fs.readFileSync(errorLog, 'utf8').split('\n');
+  // Trim the daemon logs to the last 1000 lines whenever they grow past 1200.
+  // launchd opens the files with O_APPEND before exec, so writes always go to
+  // the real end — trimming the content at startup is safe. Covers both the
+  // stdout log (daemon.log) and the stderr log (daemon-error.log).
+  for (const name of ['daemon.log', 'daemon-error.log']) {
+    try {
+      const file = path.join(cfg.DATA_DIR, name);
+      if (!fs.existsSync(file)) continue;
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
       if (lines.length > 1200) {
-        fs.writeFileSync(errorLog, lines.slice(-1000).join('\n') + '\n');
-        console.error(`[startup] Trimmed daemon-error.log (${lines.length} → 1000 lines)`);
+        fs.writeFileSync(file, lines.slice(-1000).join('\n') + '\n');
+        console.log(`[startup] Trimmed ${name} (${lines.length} → 1000 lines)`);
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   await server.start();
 
