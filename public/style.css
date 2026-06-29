@@ -902,6 +902,9 @@ body {
   background: var(--blue-fill);
 }
 
+a.meta-pill.source { text-decoration: none; }
+a.meta-pill.source:hover { background: rgba(10, 132, 255, 0.28); }
+
 .meta-pill.confidence-high {
   color: var(--green);
   border-color: rgba(48, 209, 88, 0.24);

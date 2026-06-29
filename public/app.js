@@ -112,6 +112,12 @@ async function loadLog() {
   } catch {}
 }
 
+// Refresh the activity log if the user is currently looking at it, so it
+// updates live as new events arrive instead of only on navigation.
+function refreshLogIfVisible() {
+  if (document.getElementById('section-log')?.classList.contains('active')) loadLog();
+}
+
 /* ── Rendering ─────────────────────────────────────────────────────────── */
 
 function renderOverview() {
@@ -585,9 +591,15 @@ function renderQueue(queue) {
 
     const metaRow = document.createElement('div');
     metaRow.className = 'queue-meta';
+    const qLink = meta.commentUrl || meta.sourceUrl;
+    const qSource = meta.sourceLabel
+      ? (qLink
+          ? `<a class="meta-pill source" href="${escapeHtml(qLink)}" target="_blank" rel="noreferrer" title="${meta.commentUrl ? 'Open the Reddit comment' : 'Open the Reddit thread'}">${escapeHtml(meta.sourceLabel)} ↗</a>`
+          : `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>`)
+      : '';
     metaRow.innerHTML = [
       i === 0 ? '<span class="meta-pill next-up">Next up</span>' : '',
-      meta.sourceLabel ? `<span class="meta-pill source">${escapeHtml(meta.sourceLabel)}</span>` : '',
+      qSource,
       meta.statusHint ? `<span class="meta-pill">${escapeHtml(meta.statusHint)}</span>` : '',
       meta.regionRestricted ? `<span class="meta-pill region-restricted">📍 maybe ${escapeHtml(meta.region || 'other area')} — will verify</span>`
         : meta.region ? `<span class="meta-pill">📍 ${escapeHtml(meta.region)}</span>` : '',
@@ -840,6 +852,7 @@ function handleSSE(data) {
 
     case 'reddit_done':
       loadAll();
+      refreshLogIfVisible();
       if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       if (data.error) {
         showToast(`Source scan failed: ${data.error}`, 'error');
@@ -861,10 +874,12 @@ function handleSSE(data) {
     case 'apply_progress':
       if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       appendLiveLog(data);
+      refreshLogIfVisible();
       break;
 
     case 'apply_done':
       loadAll();
+      refreshLogIfVisible();
       if (data.scanStatus) { stats.scanStatus = data.scanStatus; renderScanStatus(); }
       if (data.error) {
         showToast(`Apply failed: ${data.error}`, 'error');
