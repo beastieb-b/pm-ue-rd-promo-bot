@@ -102,25 +102,33 @@ const FILTER_WORDS = new Set([
   'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH', 'SIXTH', 'SEVENTH',
 ]);
 
-// Extract codes while keeping the comment text each code was found in, so
-// downstream consumers can read per-code context (e.g. region restrictions).
-// Returns a Map of code → joined context of every comment that mentioned it.
-function extractCodesWithContext(commentTexts) {
-  const context = new Map();
-  const add = (code, text) => {
-    const prev = context.get(code);
-    context.set(code, prev ? `${prev}\n${text}` : text);
-  };
+// Extract codes while keeping, per code: the joined comment text it appeared in
+// (for region detection) and the permalink of the first comment that mentioned
+// it (so the UI can deep-link to the exact Reddit comment).
+// Accepts either plain strings or { text, permalink } objects.
+// Returns a Map of code → { context, commentUrl }.
+function extractCodesWithContext(comments) {
+  const map = new Map();
 
-  for (const text of commentTexts) {
+  for (const c of comments) {
+    const text = typeof c === 'string' ? c : (c && c.text);
+    const permalink = typeof c === 'string' ? null : (c && c.permalink) || null;
     if (!text || text.length < 3) continue;
     const cleaned = text
       .replace(/https?:\/\/\S+/gi, ' ')
       .replace(/<[^>]*>/g, ' ');
-    for (const code of extractCodes([cleaned])) add(code, text);
+    for (const code of extractCodes([cleaned])) {
+      const prev = map.get(code);
+      if (prev) {
+        prev.context += `\n${text}`;
+        if (!prev.commentUrl && permalink) prev.commentUrl = permalink;
+      } else {
+        map.set(code, { context: text, commentUrl: permalink });
+      }
+    }
   }
 
-  return context;
+  return map;
 }
 
 function extractCodes(commentTexts) {

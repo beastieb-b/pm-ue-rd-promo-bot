@@ -1124,6 +1124,13 @@ body {
   color: var(--label);
 }
 
+.source-link {
+  color: var(--blue);
+  text-decoration: none;
+  font-weight: 600;
+}
+.source-link:hover { text-decoration: underline; }
+
 .result-submeta {
   color: var(--label-3);
   font-size: 11px;

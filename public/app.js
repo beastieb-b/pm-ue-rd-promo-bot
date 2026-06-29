@@ -560,8 +560,13 @@ function renderResults() {
 
     const sourceCell = document.createElement('td');
     sourceCell.className = 'result-source';
+    const sourceLink = r.commentUrl || r.sourceUrl;
+    const sourceLabel = escapeHtml(r.sourceLabel || 'Manual');
+    const labelHtml = sourceLink
+      ? `<a class="source-link" href="${escapeHtml(sourceLink)}" target="_blank" rel="noreferrer" title="${r.commentUrl ? 'Open the Reddit comment' : 'Open the Reddit thread'}">${sourceLabel} ↗</a>`
+      : sourceLabel;
     sourceCell.innerHTML = `
-      <div class="result-source-label">${escapeHtml(r.sourceLabel || 'Manual')}</div>
+      <div class="result-source-label">${labelHtml}</div>
       <div class="result-submeta">${escapeHtml(r.statusHint || r.sourceTitle || '—')}</div>
     `;
 

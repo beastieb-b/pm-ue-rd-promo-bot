@@ -68,6 +68,7 @@ function buildCodeEntry(code, meta) {
     sourceKey: meta.sourceKey,
     sourceLabel: SOURCE_LABELS[meta.sourceKey] || meta.sourceKey,
     sourceUrl: meta.sourceUrl || null,
+    commentUrl: meta.commentUrl || null,
     sourceTitle: meta.sourceTitle || null,
     confidenceScore,
     confidenceLabel: describeConfidence(confidenceScore),
@@ -166,7 +167,10 @@ async function fetchComments(threadId, subreddit = 'postmates', maxPages = 5) {
       const thingClass = thing.attr('class') || '';
       if (thingClass.includes('moderator') || thingClass.includes('distinguished')) return;
       const text = $(el).text().trim();
-      if (text && text.length > 3) allComments.push(text);
+      if (text && text.length > 3) {
+        const permalink = thing.attr('data-permalink');
+        allComments.push({ text, permalink: permalink ? `https://www.reddit.com${permalink}` : null });
+      }
     });
 
     const nextLink = $('span.next-button a').attr('href');
@@ -226,16 +230,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
 
   const codeContext = extractCodesWithContext(comments);
   const allCodes = new Set(codeContext.keys());
+
+  // Backfill the comment deep-link onto every code seen in the thread — even
+  // already-tried ones — so existing results gain a link, not just new codes.
+  for (const [code, ctx] of codeContext) {
+    if (ctx.commentUrl) state.mergeCodeMeta(code, { commentUrl: ctx.commentUrl });
+  }
   const triedState = getTriedState();
   const triedSet = new Set(triedState.tried_codes);
   const newCodes = [...allCodes].filter(c => !triedSet.has(c)).sort();
   const sourceUrl = `https://www.reddit.com/r/${subreddit}/comments/${newestEntry.id}/`;
   const entriesToQueue = newCodes.map(code => {
+    const ctx = codeContext.get(code) || {};
     // Read the comment(s) this code appeared in for a region restriction.
-    const region = detectRegionRestriction(codeContext.get(code));
+    const region = detectRegionRestriction(ctx.context);
     return buildCodeEntry(code, {
       sourceKey,
       sourceUrl,
+      // Deep link to the exact comment this code came from (falls back to the
+      // thread URL in the UI when not available, e.g. older entries).
+      commentUrl: ctx.commentUrl || null,
       sourceTitle: newestEntry.title,
       statusHint: 'Monthly thread',
       statusNote: `${comments.length} comments scanned in the latest monthly thread`,
