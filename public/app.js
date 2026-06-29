@@ -136,6 +136,9 @@ function renderOverview() {
       const cls = delta > 0 ? 'delta-up' : delta < 0 ? 'delta-down' : 'delta-flat';
       text += ` · <span class="${cls}">${arrow} ${formatMoney(Math.abs(delta))} vs last month</span>`;
     }
+    if (typeof stats.savedLifetime === 'number' && stats.savedLifetime > 0) {
+      text += ` · <span class="delta-flat">${formatMoney(stats.savedLifetime)} all-time</span>`;
+    }
     sub.innerHTML = text;
   }
 
@@ -483,6 +486,16 @@ function renderSettings() {
 
   renderSetupChecklist();
   updateNextRunLabel();
+
+  // About card
+  const verEl = document.getElementById('about-version');
+  if (verEl) verEl.textContent = stats.appVersion ? `v${stats.appVersion}` : '—';
+  const resetEl = document.getElementById('about-reset');
+  if (resetEl) {
+    resetEl.textContent = stats.lastResetDate
+      ? new Date(stats.lastResetDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      : 'No reset yet';
+  }
 }
 
 function setSelectValue(el, val) {

@@ -398,6 +398,41 @@ function getLastMonthSavings() {
   }
 }
 
+// Total fixed-dollar savings across every archived month (all prior cycles).
+function sumArchiveSavings() {
+  try {
+    if (!fs.existsSync(cfg.ARCHIVE_DIR)) return 0;
+    const files = fs.readdirSync(cfg.ARCHIVE_DIR).filter(f => f.endsWith('-processed.txt'));
+    let total = 0;
+    for (const f of files) {
+      const lines = fs.readFileSync(path.join(cfg.ARCHIVE_DIR, f), 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        if (!line.includes('\t')) continue;
+        const [, result, detail] = line.split('\t');
+        if (result === 'success') total += parseSavings(detail);
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+// When the cycle last turned over — derived from the newest archive filename
+// (YYYY-MM-DD-...). Returns an ISO date string or null if it's never reset.
+function getLastResetDate() {
+  try {
+    if (!fs.existsSync(cfg.ARCHIVE_DIR)) return null;
+    const dates = fs.readdirSync(cfg.ARCHIVE_DIR)
+      .map(f => (f.match(/^(\d{4}-\d{2}-\d{2})/) || [])[1])
+      .filter(Boolean)
+      .sort();
+    return dates.length ? dates[dates.length - 1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 function getStats() {
@@ -426,6 +461,9 @@ function getStats() {
     successRate: processed.length ? Math.round(successes.length / processed.length * 100) : 0,
     savedThisMonth,
     savedLastMonth,
+    savedLifetime: savedThisMonth + sumArchiveSavings(),
+    lastResetDate: getLastResetDate(),
+    appVersion: require('../package.json').version,
     heartbeat: getHeartbeat(),
     successCodes: successes.map(r => r.code),
     successList: successes.map(r => ({ code: r.code, detail: r.detail })),

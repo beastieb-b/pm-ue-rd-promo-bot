@@ -1039,6 +1039,13 @@ body {
   background: var(--green-fill);
 }
 
+.about-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+
 .queue-hint {
   padding: 10px 16px 0;
   font-size: 12.5px;
