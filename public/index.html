@@ -77,6 +77,16 @@
         <button class="health-banner-dismiss" onclick="dismissHealthWarning()" title="Dismiss">×</button>
       </div>
 
+      <!-- Session-expired banner (apply can't work without a valid login) -->
+      <div class="health-banner login-warning" id="login-banner" style="display:none">
+        <span class="health-banner-icon">🔑</span>
+        <div class="health-banner-text">
+          <strong>Postmates session expired</strong>
+          <span>Codes can't be applied until you log in again — go to Settings → Log in to Postmates.</span>
+        </div>
+        <a class="btn btn-secondary btn-sm" href="#settings" onclick="navigateTo('settings')" style="text-decoration:none;align-self:center">Settings</a>
+      </div>
+
       <!-- Setup Checklist (auto-hides when all required steps done) -->
       <div id="setup-checklist" style="display:none">
         <div class="setup-header">
@@ -191,6 +201,7 @@
             <h3>Pending Codes</h3>
             <span class="card-badge" id="pending-count">0 codes</span>
           </div>
+          <div class="queue-hint" id="queue-hint"></div>
           <div class="queue-list" id="queue-list">
             <div class="empty-state">Queue is empty — run a source scan to find codes</div>
           </div>
@@ -202,10 +213,11 @@
         <div class="section-header">
           <h1>Results</h1>
           <div class="filter-row">
-            <button class="filter-btn active" onclick="filterResults('all')">All</button>
-            <button class="filter-btn" onclick="filterResults('success')">Success</button>
-            <button class="filter-btn" onclick="filterResults('rejected')">Rejected</button>
-            <button class="filter-btn" onclick="filterResults('ratelimited')">Rate Limited</button>
+            <button class="filter-btn active" data-filter="all" onclick="filterResults('all')">All <span class="filter-count" id="fc-all"></span></button>
+            <button class="filter-btn" data-filter="success" onclick="filterResults('success')">Success <span class="filter-count" id="fc-success"></span></button>
+            <button class="filter-btn" data-filter="rejected" onclick="filterResults('rejected')">Rejected <span class="filter-count" id="fc-rejected"></span></button>
+            <button class="filter-btn" data-filter="region_skip" onclick="filterResults('region_skip')">Region-Locked <span class="filter-count" id="fc-region_skip"></span></button>
+            <button class="filter-btn" data-filter="ratelimited" onclick="filterResults('ratelimited')">Rate Limited <span class="filter-count" id="fc-ratelimited"></span></button>
           </div>
         </div>
 

@@ -1011,6 +1011,26 @@ body {
   border-color: rgba(10, 132, 255, 0.3);
 }
 
+.filter-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.queue-hint {
+  padding: 10px 16px 0;
+  font-size: 12.5px;
+  color: var(--label-3);
+}
+
+/* Login/session banner — warning (orange) variant of the health banner */
+.login-warning {
+  background: var(--orange-fill);
+  border-color: rgba(255, 159, 10, 0.35);
+}
+.login-warning .health-banner-text strong { color: var(--orange); }
+
 /* Horizontal scroll so the table never clips/overlaps when the window is
    narrower than the columns need (e.g. a laptop after the 220px sidebar). */
 .table-scroll { overflow-x: auto; }

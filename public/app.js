@@ -78,6 +78,7 @@ async function loadStats() {
     renderScanStatus();
     renderSetupChecklist();
     renderHealthWarning();
+    renderLoginBanner();
     // Always refresh Settings thread rows if that section is visible
     if (document.getElementById('section-settings')?.classList.contains('active')) {
       renderSettings();
@@ -230,6 +231,14 @@ function parseRegionDetail(detail) {
     if (b) location = b[1].trim();
   }
   return { amount, location };
+}
+
+// Warn on the dashboard when the Postmates session is confirmed invalid —
+// otherwise apply runs silently fail and the only sign is in Settings.
+function renderLoginBanner() {
+  const banner = document.getElementById('login-banner');
+  if (!banner) return;
+  banner.style.display = stats.loggedIn === false ? 'flex' : 'none';
 }
 
 function renderScanStatus() {
@@ -499,6 +508,20 @@ function renderQueue(queue) {
   const count = document.getElementById('pending-count');
   count.textContent = `${queue.length} code${queue.length !== 1 ? 's' : ''}`;
 
+  // Answer "when will these be tried?" right on the Queue screen.
+  const hint = document.getElementById('queue-hint');
+  if (hint) {
+    const s = stats.scanStatus;
+    if (queue.length && s?.nextApplyAt) {
+      const diff = new Date(s.nextApplyAt) - Date.now();
+      const when = diff > 0 ? `in ${formatDuration(diff)}` : 'any moment';
+      hint.textContent = `Tried automatically on the next apply run (${when}) — or click "Apply Codes" to run now.`;
+      hint.style.display = '';
+    } else {
+      hint.style.display = 'none';
+    }
+  }
+
   if (!queue.length) {
     el.innerHTML = '<div class="empty-state">Queue is empty — run a source scan to find codes</div>';
     return;
@@ -552,12 +575,15 @@ function renderResults() {
   const tbody = document.getElementById('results-tbody');
   if (!tbody) return;
 
+  updateFilterCounts();
+
   const data = activeFilter === 'all'
     ? processed
     : processed.filter(r => r.result === activeFilter);
 
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No ${activeFilter === 'all' ? '' : activeFilter + ' '}results yet</td></tr>`;
+    const name = { all: '', success: 'success ', rejected: 'rejected ', region_skip: 'region-locked ', ratelimited: 'rate-limited ' }[activeFilter] || '';
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No ${name}results yet</td></tr>`;
     return;
   }
 
@@ -663,10 +689,32 @@ function renderLog() {
     const detail = formatLogDetail(entry);
     return `<div class="log-entry">
       <span class="log-ts">${ts}</span>
-      <span class="log-type ${cssToken(entry.type)}">${escapeHtml(entry.type)}</span>
+      <span class="log-type ${cssToken(entry.type)}">${escapeHtml(eventLabel(entry.type))}</span>
       <span class="log-detail">${escapeHtml(detail)}</span>
     </div>`;
   }).join('');
+}
+
+// Friendly names for the raw event types in the activity log.
+function eventLabel(type) {
+  return {
+    reddit_check_start: 'Scan started',
+    reddit_check_done: 'Scan done',
+    reddit_check_error: 'Scan error',
+    reddit_check_fallback: 'Scan fallback',
+    new_thread_detected: 'New monthly thread',
+    monthly_reset: 'Monthly reset',
+    ue_monthly_reset: 'Monthly reset (UberEATS)',
+    apply_run_start: 'Apply started',
+    apply_run_done: 'Apply done',
+    apply_run_error: 'Apply error',
+    code_result: 'Code result',
+    code_deferred: 'Code deferred',
+    code_skipped: 'Code skipped',
+    rate_limited: 'Rate limited',
+    detection_health_warning: 'Health warning',
+    self_test: 'Self-test',
+  }[type] || type;
 }
 
 /* ── Settings Actions ──────────────────────────────────────────────────── */
@@ -1149,11 +1197,19 @@ async function removeCode(code) {
 function filterResults(filter) {
   activeFilter = filter;
   document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.classList.toggle('active',
-      btn.textContent.trim().toLowerCase() === filter ||
-      (filter === 'all' && btn.textContent.trim() === 'All'));
+    btn.classList.toggle('active', btn.dataset.filter === filter);
   });
   renderResults();
+}
+
+// Update the per-filter counts so the user can see the breakdown at a glance.
+function updateFilterCounts() {
+  const counts = { all: processed.length, success: 0, rejected: 0, region_skip: 0, ratelimited: 0 };
+  for (const r of processed) if (counts[r.result] !== undefined) counts[r.result] += 1;
+  for (const key of Object.keys(counts)) {
+    const el = document.getElementById('fc-' + key);
+    if (el) el.textContent = counts[key];
+  }
 }
 
 document.getElementById('add-code-input')?.addEventListener('keydown', e => {
