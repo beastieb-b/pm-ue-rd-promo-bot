@@ -89,56 +89,41 @@ function setSourceStatus(sourceKey, updates) {
   });
 }
 
-// ── Thread detection via RSS ────────────────────────────────────────────────
+// ── Thread detection ─────────────────────────────────────────────────────────
 
-async function detectCurrentThread() {
-  // Use old.reddit.com HTML search — the reddit.com search.rss endpoint can
-  // 429 for active subreddits, and old.reddit.com consistently returns 200.
-  const url = 'https://old.reddit.com/r/postmates/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
-  const { status, body } = await fetchUrl(url);
-  if (status !== 200) throw new Error(`Postmates thread search returned ${status}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const seen = new Set();
-  const entries = [];
-  const hrefRe = /href="(?:https?:\/\/[^"]*)?\/r\/postmates\/comments\/([a-z0-9]+)\/([^"?#]+)/g;
-  let m;
-  while ((m = hrefRe.exec(body)) !== null) {
-    const [, id, slug] = m;
-    if (seen.has(id)) continue;
-    if (!slug.includes('monthly')) continue;
-    seen.add(id);
-    entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
+// Find the current + previous monthly promo thread for a subreddit via the
+// old.reddit.com HTML search (the reddit.com search.rss endpoint 429s for busy
+// subs). old.reddit occasionally returns a 200 page that's rate-limited/empty
+// with no results — a transient blip — so we retry a few times before giving up.
+async function detectThread(subreddit) {
+  const url = `https://old.reddit.com/r/${subreddit}/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year`;
+  let lastErr = `no thread found for r/${subreddit}`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(1500 * attempt);
+    const { status, body } = await fetchUrl(url);
+    if (status !== 200) { lastErr = `r/${subreddit} thread search returned ${status}`; continue; }
+
+    // Results are sorted newest-first by ?sort=new, so preserve that order.
+    const hrefRe = new RegExp(`href="(?:https?:\\/\\/[^"]*)?\\/r\\/${subreddit}\\/comments\\/([a-z0-9]+)\\/([^"?#]+)`, 'g');
+    const seen = new Set();
+    const entries = [];
+    let m;
+    while ((m = hrefRe.exec(body)) !== null) {
+      const [, id, slug] = m;
+      if (seen.has(id) || !slug.includes('monthly')) continue;
+      seen.add(id);
+      entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
+    }
+    if (entries.length) return entries.slice(0, 2);
+    lastErr = `No r/${subreddit} thread in search results (rate-limited/empty page)`;
   }
-
-  if (!entries.length) throw new Error('No matching thread found in search results');
-  return entries.slice(0, 2);
+  throw new Error(lastErr);
 }
 
-async function detectUberEatsThread() {
-  // RSS search returns 429 for r/UberEATS (large subreddit, rate-limited).
-  // old.reddit.com HTML search returns 200 reliably with the same results.
-  const url = 'https://old.reddit.com/r/UberEATS/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year';
-  const { status, body } = await fetchUrl(url);
-  if (status !== 200) throw new Error(`UberEATS thread search returned ${status}`);
-
-  // Extract thread IDs from hrefs like /r/UberEATS/comments/{id}/monthly_..._thread/
-  // Results are sorted newest-first by ?sort=new, so preserve that order.
-  const seen = new Set();
-  const entries = [];
-  const hrefRe = /href="(?:https?:\/\/[^"]*)?\/r\/UberEATS\/comments\/([a-z0-9]+)\/([^"?#]+)/g;
-  let m;
-  while ((m = hrefRe.exec(body)) !== null) {
-    const [, id, slug] = m;
-    if (seen.has(id)) continue;
-    if (!slug.includes('monthly')) continue;
-    seen.add(id);
-    // Assign synthetic published times that preserve newest-first order
-    entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
-  }
-
-  if (!entries.length) throw new Error('No UberEATS thread found in search results');
-  return entries.slice(0, 2);
-}
+async function detectCurrentThread() { return detectThread('postmates'); }
+async function detectUberEatsThread() { return detectThread('UberEATS'); }
 
 async function fetchComments(threadId, subreddit = 'postmates', maxPages = 5) {
   const allComments = [];
@@ -178,17 +163,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   onProgress?.({ source: label, step: 'detecting' });
   setSourceStatus(sourceKey, { status: 'checking', note: 'Looking for the latest monthly thread' });
 
+  const storedThreadId = getThreadId();
   let entries;
   try {
     entries = await detectFn();
   } catch (err) {
-    onProgress?.({ source: label, step: 'error', message: err.message });
-    setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0 });
-    return { error: `${label} thread detection failed: ${err.message}` };
+    // Detection can blip transiently (old.reddit returns a rate-limited/empty
+    // search page). If we already know this month's thread, fall back to it so
+    // one blip doesn't break the scan or flip the source to a 30-min "error" —
+    // the next successful detection still catches a genuine new monthly thread.
+    if (storedThreadId) {
+      state.appendLog({ type: 'reddit_check_fallback', source: label, reason: err.message, used_thread: storedThreadId });
+      entries = [{ id: storedThreadId, title: 'Monthly Existing User Promo Code Thread', published: Date.now() }];
+    } else {
+      onProgress?.({ source: label, step: 'error', message: err.message });
+      setSourceStatus(sourceKey, { status: 'error', note: err.message, usableCodes: 0 });
+      return { error: `${label} thread detection failed: ${err.message}` };
+    }
   }
 
   const newestEntry = entries[0];
-  const storedThreadId = getThreadId();
 
   if (newestEntry.id !== storedThreadId) {
     state.appendLog({ type: 'new_thread_detected', source: label, old_thread: storedThreadId, new_thread: newestEntry.id, month: currentMonth });
