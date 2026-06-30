@@ -93,10 +93,62 @@ function setSourceStatus(sourceKey, updates) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A monthly promo thread's slug looks like
+// "monthly_existing_user_promo_code_thread_july_2026". When we parse a listing
+// page (no search query to constrain results) we require the stronger match so
+// we don't pick up unrelated "monthly …" threads; on the search page the query
+// already constrains results, so a plain "monthly" match is enough there.
+function isMonthlyPromoSlug(slug) {
+  return slug.includes('monthly') && (slug.includes('promo') || slug.includes('existing'));
+}
+
+// Pull monthly-thread links out of an old.reddit HTML page, in document order
+// (the caller arranges the source so that order is newest-first).
+function parseThreadEntries(body, subreddit, strict) {
+  const hrefRe = new RegExp(`href="(?:https?:\\/\\/[^"]*)?\\/r\\/${subreddit}\\/comments\\/([a-z0-9]+)\\/([^"?#]+)`, 'g');
+  const seen = new Set();
+  const entries = [];
+  let m;
+  while ((m = hrefRe.exec(body)) !== null) {
+    const [, id, slug] = m;
+    const matches = strict ? isMonthlyPromoSlug(slug) : slug.includes('monthly');
+    if (seen.has(id) || !matches) continue;
+    seen.add(id);
+    entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
+  }
+  return entries;
+}
+
+// Fallback when search comes up empty: read the subreddit listing directly. The
+// monthly thread is stickied on the front page and shows up in /new/ the moment
+// it's posted — neither depends on Reddit's search index, which can lag a
+// freshly-posted thread by minutes to hours (most likely right at month rollover).
+async function detectFromListing(subreddit) {
+  const urls = [
+    `https://old.reddit.com/r/${subreddit}/`,      // stickied monthly thread sits at the top
+    `https://old.reddit.com/r/${subreddit}/new/`,  // newest posts, caught before search indexes
+  ];
+  const seen = new Set();
+  const entries = [];
+  for (const url of urls) {
+    let status, body;
+    try { ({ status, body } = await fetchUrl(url)); } catch { continue; }
+    if (status !== 200) continue;
+    for (const e of parseThreadEntries(body, subreddit, true)) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      entries.push(e);
+    }
+    if (entries.length) break; // the front page already has the stickied thread
+  }
+  return entries;
+}
+
 // Find the current + previous monthly promo thread for a subreddit via the
 // old.reddit.com HTML search (the reddit.com search.rss endpoint 429s for busy
 // subs). old.reddit occasionally returns a 200 page that's rate-limited/empty
-// with no results — a transient blip — so we retry a few times before giving up.
+// with no results — a transient blip — so we retry a few times, then fall back
+// to the subreddit listing before giving up.
 async function detectThread(subreddit) {
   const url = `https://old.reddit.com/r/${subreddit}/search?q=Monthly+Existing+User+Promo+Code+Thread&restrict_sr=1&sort=new&t=year`;
   let lastErr = `no thread found for r/${subreddit}`;
@@ -106,19 +158,15 @@ async function detectThread(subreddit) {
     if (status !== 200) { lastErr = `r/${subreddit} thread search returned ${status}`; continue; }
 
     // Results are sorted newest-first by ?sort=new, so preserve that order.
-    const hrefRe = new RegExp(`href="(?:https?:\\/\\/[^"]*)?\\/r\\/${subreddit}\\/comments\\/([a-z0-9]+)\\/([^"?#]+)`, 'g');
-    const seen = new Set();
-    const entries = [];
-    let m;
-    while ((m = hrefRe.exec(body)) !== null) {
-      const [, id, slug] = m;
-      if (seen.has(id) || !slug.includes('monthly')) continue;
-      seen.add(id);
-      entries.push({ id, title: 'Monthly Existing User Promo Code Thread', published: Date.now() - entries.length * 1000 });
-    }
+    const entries = parseThreadEntries(body, subreddit, false);
     if (entries.length) return entries.slice(0, 2);
     lastErr = `No r/${subreddit} thread in search results (rate-limited/empty page)`;
   }
+
+  // Search empty/failing — try the listing (doesn't rely on the search index).
+  const listing = await detectFromListing(subreddit);
+  if (listing.length) return listing.slice(0, 2);
+
   throw new Error(lastErr);
 }
 
@@ -267,6 +315,34 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   return { threadId: newestEntry.id, commentsScanned: comments.length, codesFound: allCodes.size, newCodes: newCodes.length, queued: added };
 }
 
+// Monthly threads are usually posted on the 1st, but a 1–2 day delay is normal,
+// so we don't warn until a few days in (state.STALE_THREAD_GRACE_DAYS). Past
+// that, if we're still pointed at a previous month's thread, the new thread
+// likely wasn't detected (e.g. the mods changed the title format) — surface that
+// as a dashboard banner instead of silently scanning last month's thread forever.
+function checkThreadStaleness() {
+  const now = new Date();
+  if (now.getDate() < state.STALE_THREAD_GRACE_DAYS) return; // grace for a late post
+  const currentMonth = now.toISOString().slice(0, 7);
+
+  const stale = [];
+  const pmMonth = state.getThreadMonth();
+  const ueMonth = state.getUEThreadMonth();
+  if (pmMonth && pmMonth < currentMonth) stale.push('r/postmates');
+  if (ueMonth && ueMonth < currentMonth) stale.push('r/UberEATS');
+
+  const existing = state.getHealthWarning();
+  if (stale.length) {
+    state.setHealthWarning(
+      `Still on last month's ${stale.join(' & ')} thread — the ${currentMonth} monthly thread hasn't been detected. ` +
+      `If it's been posted, the title format may have changed; check the subreddit.`,
+      'thread_stale'
+    );
+  } else if (existing && existing.source === 'thread_stale') {
+    state.clearHealthWarning(); // new thread now detected — retire only our own banner
+  }
+}
+
 async function runRedditCheck({ onProgress } = {}) {
   state.appendLog({ type: 'reddit_check_start' });
 
@@ -296,6 +372,8 @@ async function runRedditCheck({ onProgress } = {}) {
     onProgress,
   });
 
+  checkThreadStaleness();
+
   const scans = [pm, ue];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);
   const totalQueued = scans.reduce((sum, entry) => sum + (entry.queued || 0), 0);
@@ -317,5 +395,8 @@ module.exports = {
   runRedditCheck,
   detectCurrentThread,
   detectUberEatsThread,
+  detectFromListing,
+  checkThreadStaleness,
+  isMonthlyPromoSlug,
   fetchComments,
 };

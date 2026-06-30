@@ -28,7 +28,11 @@ total** so the number stays honest.
 1. **Scan** — fetches the current monthly thread from `old.reddit.com` (via
    `curl`, because Reddit TLS-fingerprints Node's HTTP stack) and scrapes the
    comments. New threads each month are detected automatically and the queue is
-   archived + reset.
+   archived + reset. Detection uses old.reddit search first, then falls back to
+   the subreddit's stickied/new listing (which doesn't depend on search
+   indexing, so a freshly-posted thread is caught right at month rollover). If a
+   source is still on last month's thread a few days into the new month, the
+   dashboard raises a banner so a missed rollover never goes unnoticed.
 2. **Extract** — pulls promo-code-shaped tokens out of the comments, filtering
    common false positives (English words, city names, time strings, etc.).
 3. **Apply** — opens the Postmates promo modal in a real headed Chrome profile
@@ -88,7 +92,7 @@ There is no login — access is gated by your network (Tailscale / LAN). Set
 
 | Section | What it shows |
 |---|---|
-| **Dashboard** | Total saved this month (region-locked codes excluded), codes applied, queue size, successful-code chips, recent activity, a "Worked, but region-locked" card, and live source health. |
+| **Dashboard** | Total saved this month (region-locked codes excluded), codes applied, queue size, successful-code chips, recent activity, a "Worked, but region-locked" card, a **"This Month's Thread"** card (positive confirmation the new monthly thread was detected — shown through the first few days of each month, with a waiting/stale indicator if a source hasn't rolled over yet), and live source health. |
 | **Queue** | Codes waiting to be tried, with source + region hints. Add codes manually. |
 | **Results** | Every attempt with result, reason, timestamp, and a link to the exact Reddit comment. Per-row actions: **↻ Retry** (failed), **📍 mark region-locked** (success that doesn't count), **✓$ count it** (region-locked that actually works), and delete. |
 | **Activity Log** | Raw event log. |

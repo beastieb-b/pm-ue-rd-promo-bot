@@ -17,6 +17,7 @@ module.exports = {
   PROCESSED_FILE: path.join(DATA_DIR, 'processed.txt'),
   THREAD_FILE: path.join(DATA_DIR, 'thread_config.txt'),
   THREAD_MONTH_FILE: path.join(DATA_DIR, 'last_thread_month.txt'),
+  THREAD_DETECTED_FILE: path.join(DATA_DIR, 'last_thread_detected.txt'),
   TRIED_FILE: path.join(DATA_DIR, 'tried_codes.json'),
   LOG_FILE: path.join(DATA_DIR, 'run_log.jsonl'),
   SESSION_STATE_FILE: path.join(DATA_DIR, 'session_state.json'),
@@ -25,6 +26,7 @@ module.exports = {
   // State files — Uber Eats (r/UberEATS) — shares queue + processed with Postmates
   UE_THREAD_FILE: path.join(DATA_DIR, 'ue_thread_config.txt'),
   UE_THREAD_MONTH_FILE: path.join(DATA_DIR, 'ue_last_thread_month.txt'),
+  UE_THREAD_DETECTED_FILE: path.join(DATA_DIR, 'ue_last_thread_detected.txt'),
   UE_TRIED_FILE: path.join(DATA_DIR, 'ue_tried_codes.json'),
 
   // Postmates automation

@@ -246,6 +246,44 @@ function saveThreadId(id, month) {
   writeFileAtomic(cfg.THREAD_MONTH_FILE, month);
 }
 
+function getThreadDetectedAt() {
+  if (!fs.existsSync(cfg.THREAD_DETECTED_FILE)) return null;
+  return fs.readFileSync(cfg.THREAD_DETECTED_FILE, 'utf8').trim() || null;
+}
+
+function getUEThreadDetectedAt() {
+  if (!fs.existsSync(cfg.UE_THREAD_DETECTED_FILE)) return null;
+  return fs.readFileSync(cfg.UE_THREAD_DETECTED_FILE, 'utf8').trim() || null;
+}
+
+// Grace before we treat a still-old thread as a problem, and how long into the
+// month we surface positive "thread found" confirmation. Single source of truth
+// shared with reddit.js's staleness check.
+const STALE_THREAD_GRACE_DAYS = 3;
+const EARLY_MONTH_DAYS = 5;
+
+// Per-source state of the monthly-thread handoff, for the dashboard to render:
+//   'found'   — the current month's thread is loaded (success)
+//   'waiting' — still on last month's thread but within the grace window
+//   'stale'   — still on last month's thread past the grace window (a problem)
+//   'unknown' — no thread/month recorded yet
+function computeThreadState(month, currentMonth, day) {
+  if (!month) return 'unknown';
+  if (month >= currentMonth) return 'found';
+  return day >= STALE_THREAD_GRACE_DAYS ? 'stale' : 'waiting';
+}
+
+function getThreadFreshness() {
+  const now = new Date();
+  const day = now.getDate();
+  const currentMonth = now.toISOString().slice(0, 7);
+  const sources = [
+    { label: 'r/postmates', subreddit: 'postmates', threadId: getThreadId(), month: getThreadMonth(), detectedAt: getThreadDetectedAt() },
+    { label: 'r/UberEATS', subreddit: 'UberEATS', threadId: getUEThreadId(), month: getUEThreadMonth(), detectedAt: getUEThreadDetectedAt() },
+  ].map(s => ({ ...s, state: computeThreadState(s.month, currentMonth, day) }));
+  return { currentMonth, day, earlyMonth: day <= EARLY_MONTH_DAYS, graceDays: STALE_THREAD_GRACE_DAYS, sources };
+}
+
 // ── Monthly reset ─────────────────────────────────────────────────────────────
 // Called when a new monthly thread is detected.
 // Archives current queue/processed files, resets tried state.
@@ -272,6 +310,7 @@ function monthlyReset(oldThreadId, newThreadId, newMonth) {
   // Fresh tried_codes state for new thread
   saveTriedState({ thread_id: newThreadId, tried_codes: [], successful_codes: [], failed_codes: [] });
   saveThreadId(newThreadId, newMonth);
+  writeFileAtomic(cfg.THREAD_DETECTED_FILE, new Date().toISOString()); // when this thread was found
 
   appendLog({ type: 'monthly_reset', old_thread: oldThreadId, new_thread: newThreadId, month: newMonth });
 }
@@ -322,6 +361,7 @@ function saveUETriedState(state) {
 function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
   saveUETriedState({ thread_id: newThreadId, tried_codes: [] });
   saveUEThreadId(newThreadId, newMonth);
+  writeFileAtomic(cfg.UE_THREAD_DETECTED_FILE, new Date().toISOString()); // when this thread was found
   appendLog({ type: 'ue_monthly_reset', old_thread: oldThreadId, new_thread: newThreadId, month: newMonth });
 }
 
@@ -329,8 +369,8 @@ function ueMonthlyReset(oldThreadId, newThreadId, newMonth) {
 
 const HEALTH_FILE = path.join(cfg.DATA_DIR, 'health.json');
 
-function setHealthWarning(message) {
-  writeFileAtomic(HEALTH_FILE, JSON.stringify({ message, ts: new Date().toISOString() }));
+function setHealthWarning(message, source = 'general') {
+  writeFileAtomic(HEALTH_FILE, JSON.stringify({ message, source, ts: new Date().toISOString() }));
 }
 
 function getHealthWarning() {
@@ -453,6 +493,7 @@ function getStats() {
     threadMonth: getThreadMonth(),
     ueThreadId: getUEThreadId(),
     ueThreadMonth: getUEThreadMonth(),
+    threadFreshness: getThreadFreshness(),
     queueCount: queue.length,
     totalTried: processed.length,
     successCount: successes.length,
@@ -487,6 +528,9 @@ module.exports = {
   getProcessedDetails,
   getTriedState, saveTriedState,
   getThreadId, getThreadMonth, saveThreadId,
+  getThreadDetectedAt, getUEThreadDetectedAt,
+  getThreadFreshness,
+  STALE_THREAD_GRACE_DAYS,
   monthlyReset,
   getUEThreadId, getUEThreadMonth, saveUEThreadId,
   getUETriedState, saveUETriedState,

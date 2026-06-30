@@ -931,6 +931,33 @@ a.meta-pill.source:hover { background: rgba(10, 132, 255, 0.28); }
   padding: 4px 0;
 }
 
+/* "This Month's Thread" confirmation card */
+.thread-status-list { padding: 4px 0; }
+.thread-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--sep);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.thread-status-row:last-child { border-bottom: none; }
+.thread-status-icon { flex: none; font-size: 14px; line-height: 1.4; }
+.thread-status-text { min-width: 0; }
+.thread-status-row.found strong { color: var(--green); }
+.thread-status-row.waiting strong { color: var(--warning); }
+.thread-status-row.stale strong { color: var(--red); }
+.thread-status-link {
+  margin-left: 6px;
+  color: var(--accent);
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.thread-status-link:hover { text-decoration: underline; }
+
 .source-row {
   display: flex;
   align-items: center;

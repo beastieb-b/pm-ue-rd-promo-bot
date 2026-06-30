@@ -169,7 +169,8 @@ function renderOverview() {
     if (stats.ueThreadId) subs.push('r/UberEATS');
     const month = formatMonth(stats.threadMonth || stats.ueThreadMonth);
     if (subs.length) {
-      tb.textContent = `${subs.join(' + ')}${month ? ' · ' + month : ''}`;
+      const icon = threadBadgeIcon(stats.threadFreshness);
+      tb.textContent = `${icon ? icon + ' ' : ''}${subs.join(' + ')}${month ? ' · ' + month : ''}`;
       // Tooltip with the exact thread IDs for verification.
       const ids = [];
       if (stats.threadId) ids.push(`r/postmates: ${stats.threadId}`);
@@ -180,6 +181,8 @@ function renderOverview() {
       tb.title = '';
     }
   }
+
+  renderThreadFreshness(stats.threadFreshness);
 
   const successEl = document.getElementById('success-list');
   const count = document.getElementById('success-count');
@@ -1362,6 +1365,68 @@ function formatMonth(m) {
   if (!m) return '';
   const [year, month] = m.split('-');
   return new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function formatDetectedAt(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// A small state marker for the thread badge: ✓ once both threads are on the
+// current month, ⏳/⚠️ while one is still catching up.
+function threadBadgeIcon(freshness) {
+  if (!freshness || !freshness.sources) return '';
+  const states = freshness.sources.filter(s => s.threadId).map(s => s.state);
+  if (states.includes('stale')) return '⚠️';
+  if (states.includes('waiting')) return '⏳';
+  if (states.length && states.every(s => s === 'found')) return '✓';
+  return '';
+}
+
+// "This Month's Thread" card — positive confirmation that the new monthly
+// thread was found (shown through the first few days of the month), and a
+// waiting/stale indicator if a source hasn't rolled over yet.
+function renderThreadFreshness(freshness) {
+  const card = document.getElementById('thread-status-card');
+  const list = document.getElementById('thread-status-list');
+  const monthBadge = document.getElementById('thread-status-month');
+  if (!card || !list || !freshness) return;
+
+  const sources = (freshness.sources || []).filter(s => s.threadId || s.state !== 'unknown');
+  const hasIssue = sources.some(s => s.state === 'waiting' || s.state === 'stale');
+
+  // Show during the first few days of the month (positive confirmation), or any
+  // time a source hasn't rolled over yet (so a lagging handoff is always visible).
+  if (!sources.length || (!freshness.earlyMonth && !hasIssue)) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  if (monthBadge) monthBadge.textContent = formatMonth(freshness.currentMonth);
+
+  const monthName = formatMonth(freshness.currentMonth);
+  list.innerHTML = sources.map(s => {
+    let icon, cls, text;
+    if (s.state === 'found') {
+      icon = '✅'; cls = 'found';
+      const when = s.detectedAt ? ` · detected ${escapeHtml(formatDetectedAt(s.detectedAt))}` : '';
+      text = `<strong>${escapeHtml(s.label)}</strong> — ${escapeHtml(monthName)} thread found${when}`;
+    } else if (s.state === 'waiting') {
+      icon = '⏳'; cls = 'waiting';
+      text = `<strong>${escapeHtml(s.label)}</strong> — waiting for the ${escapeHtml(monthName)} thread…`;
+    } else if (s.state === 'stale') {
+      icon = '⚠️'; cls = 'stale';
+      text = `<strong>${escapeHtml(s.label)}</strong> — still on last month's thread (${escapeHtml(monthName)} not detected)`;
+    } else {
+      icon = '➖'; cls = 'unknown';
+      text = `<strong>${escapeHtml(s.label)}</strong> — no thread yet`;
+    }
+    const link = s.threadId
+      ? ` <a class="thread-status-link" href="https://www.reddit.com/r/${encodeURIComponent(s.subreddit)}/comments/${encodeURIComponent(s.threadId)}/" target="_blank" rel="noopener">${escapeHtml(s.threadId)}</a>`
+      : '';
+    return `<div class="thread-status-row ${cls}"><span class="thread-status-icon">${icon}</span><span class="thread-status-text">${text}${link}</span></div>`;
+  }).join('');
 }
 
 // "$20" / "$12.50" — drops the ".00" on whole-dollar amounts.
