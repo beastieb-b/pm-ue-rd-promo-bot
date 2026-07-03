@@ -292,6 +292,20 @@ async function dismissNoInputModal(page) {
   return true;
 }
 
+// Detect the logged-out marketing landing page. When a session expires, the
+// saved auth cookie can still be present and unexpired, so isLoggedIn() (a
+// cookie-presence check) keeps reporting "logged in" — but the site bounces us
+// to the logged-out homepage (hero + "Log in" / "Sign up"). A logged-in session
+// never renders a "Sign up" affordance, so a visible Sign-up button/link is a
+// reliable "not authenticated" signal on both postmates.com and ubereats.com.
+async function looksLoggedOut(page) {
+  try {
+    const signup = page.getByRole('button', { name: /sign\s*up/i })
+      .or(page.getByRole('link', { name: /sign\s*up/i }));
+    return await signup.first().isVisible({ timeout: 3000 }).catch(() => false);
+  } catch { return false; }
+}
+
 async function applyCode(page, code, platform = 'postmates') {
   const plat = PLATFORMS[platform] || PLATFORMS.postmates;
   // Navigate to promo modal URL.
@@ -305,6 +319,15 @@ async function applyCode(page, code, platform = 'postmates') {
   if (!plat.onDomain(page.url())) {
     plat.setValid(false);
     return { result: 'not_logged_in', detail: `Redirected — use Settings → Log in to ${plat.name}` };
+  }
+
+  // A stale/expired session stays on-domain but renders the marketing landing
+  // page instead of the promos UI. The saved cookie may still be present, so
+  // only this on-page check catches it — without it we'd mark the session valid
+  // and then fail later with a misleading "Promo modal did not open".
+  if (await looksLoggedOut(page)) {
+    plat.setValid(false);
+    return { result: 'not_logged_in', detail: `${plat.name} session expired — Settings → Log in to ${plat.name}` };
   }
   plat.setValid(true);
 
@@ -514,11 +537,20 @@ async function runApplyCodes(options = {}) {
         break;
       }
 
-      if (['not_logged_in', 'error', 'unknown'].includes(applyResult.result)) {
+      if (applyResult.result === 'not_logged_in') {
+        // Session is dead — every remaining code would hit the same wall, so
+        // stop the run now. Codes stay queued and resume once the user re-logs
+        // in (the dashboard shows a session-expired banner in the meantime).
+        state.appendLog({ type: 'code_deferred', code, reason: 'not_logged_in', note: 'session invalid — stopping run' });
+        if (onProgress) onProgress({ code, status: 'login_required', detail: applyResult.detail });
+        break;
+      }
+
+      if (['error', 'unknown'].includes(applyResult.result)) {
         // Transient or ambiguous failure — code stays in queue and retries automatically next run.
         // Add a short cooldown so consecutive failures don't hammer the site back-to-back.
         state.appendLog({ type: 'code_deferred', code, reason: applyResult.result, note: 'will retry next run' });
-        if (applyResult.result !== 'not_logged_in' && code !== pending[pending.length - 1]) {
+        if (code !== pending[pending.length - 1]) {
           await page.waitForTimeout(20_000); // 20s cooldown between transient failures
         }
         continue;
