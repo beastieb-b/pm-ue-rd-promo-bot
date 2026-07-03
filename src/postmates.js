@@ -185,6 +185,15 @@ function classify(text, before) {
     return { result: 'ratelimited', detail: 'Rate limit detected' };
   }
 
+  // "Oops, you already applied this promotion" — the code IS already on the
+  // account, so it's a win, not a failure. Must be checked BEFORE the rejection
+  // scan because that message also contains "oops" (a generic-error trigger),
+  // which would otherwise mislabel an applied code as "Error applying code".
+  if (/already applied|already redeemed/.test(text) &&
+      !/already applied|already redeemed/.test(before)) {
+    return { result: 'success', detail: 'Already applied' };
+  }
+
   // Rejection — only trust a phrase that was NOT already in the modal before
   // applying (the modal lists existing promos whose text could contain words
   // like "expired"). Comparing the trigger phrase, not the label, avoids that.
@@ -680,4 +689,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, testDetection };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, testDetection };
