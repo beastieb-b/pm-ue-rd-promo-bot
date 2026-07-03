@@ -249,17 +249,12 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
     return { error: `${label} comment fetch failed: ${err.message}` };
   }
 
-  const prevEntry = entries[1];
-  if (comments.length === 0 && prevEntry && prevEntry.id !== newestEntry.id) {
-    onProgress?.({ source: label, step: 'fallback', threadId: prevEntry.id });
-    try {
-      const prevComments = await fetchComments(prevEntry.id, subreddit);
-      if (prevComments.length > 0) {
-        state.appendLog({ type: 'reddit_check_fallback', source: label, new_thread: newestEntry.id, prev_thread: prevEntry.id, comments: prevComments.length });
-        comments = prevComments;
-      }
-    } catch {}
-  }
+  // NOTE: we intentionally do NOT fall back to the previous month's thread when
+  // the newest thread is empty. Monthly codes expire when the month flips, so
+  // backfilling last month's thread at rollover just re-queues a pile of expired
+  // codes into the new month (they all come back "Code expired" and waste apply
+  // attempts). A freshly-posted, still-empty thread simply yields no codes yet —
+  // we wait for real ones to be posted rather than reintroducing stale ones.
 
   const codeContext = extractCodesWithContext(comments);
   const allCodes = new Set(codeContext.keys());
