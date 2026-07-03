@@ -787,6 +787,7 @@ function eventLabel(type) {
     code_skipped: 'Code skipped',
     apply_on_arrival: 'Instant apply (new codes)',
     applied_skip: 'Skipped — already on account',
+    ubereats_fallback_retry: 'UberEats retry (transient error)',
     rate_limited: 'Rate limited',
     detection_health_warning: 'Health warning',
     self_test: 'Self-test',

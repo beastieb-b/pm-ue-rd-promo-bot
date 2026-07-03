@@ -582,11 +582,28 @@ async function runApplyCodes(options = {}) {
       if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired') {
         if (onProgress) onProgress({ code, status: 'trying_ubereats' });
         state.appendLog({ type: 'ubereats_fallback', code, postmates_detail: applyResult.detail });
+        // Up to 2 attempts: the UberEats modal occasionally closes mid-flow
+        // (transient — a fresh visit works). Without the retry a blip would
+        // permanently forfeit the code's UberEats chance, since an error here
+        // finalizes the Postmates rejection and the code never re-queues.
         let ue;
-        try {
-          ue = await applyCode(page, code, 'ubereats');
-        } catch (err) {
-          ue = { result: 'error', detail: err.message.slice(0, 100) };
+        for (let ueAttempt = 0; ueAttempt < 2; ueAttempt++) {
+          try {
+            ue = await applyCode(page, code, 'ubereats');
+          } catch (err) {
+            try {
+              const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
+              fs.mkdirSync(debugDir, { recursive: true });
+              const ts = new Date().toISOString().replace(/[:.]/g, '-');
+              await page.screenshot({ path: path.join(debugDir, `ue-error-${ts}.png`), fullPage: false });
+            } catch {}
+            ue = { result: 'error', detail: err.message.slice(0, 100) };
+          }
+          if (ue.result !== 'error') break;
+          if (ueAttempt === 0) {
+            state.appendLog({ type: 'ubereats_fallback_retry', code, error: ue.detail });
+            await page.waitForTimeout(5000);
+          }
         }
         state.appendLog({ type: 'code_result', code, result: ue.result, detail: ue.detail, platform: 'ubereats' });
         if (onProgress) onProgress({ code, status: ue.result, detail: ue.detail, platform: 'ubereats' });
