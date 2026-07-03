@@ -36,12 +36,14 @@ const PLATFORMS = {
   postmates: {
     name: 'Postmates',
     promoUrl: cfg.PROMO_URL,
+    homeUrl: 'https://postmates.com',       // warm-up that reliably restores the session
     onDomain: (url) => url.includes('postmates.com') && !/\/login|\/signin/.test(url),
     setValid: setSessionValid,
   },
   ubereats: {
     name: 'UberEats',
     promoUrl: cfg.UBEREATS_PROMO_URL,
+    homeUrl: 'https://www.ubereats.com',
     onDomain: (url) => url.includes('ubereats.com') && !/\/login|\/signin|auth\.uber\.com/.test(url),
     setValid: setUeSessionValid,
   },
@@ -321,48 +323,57 @@ async function applyCode(page, code, platform = 'postmates') {
     return { result: 'not_logged_in', detail: `Redirected — use Settings → Log in to ${plat.name}` };
   }
 
-  // A stale/expired session stays on-domain but renders the marketing landing
-  // page instead of the promos UI. The saved cookie may still be present, so
-  // only this on-page check catches it — without it we'd mark the session valid
-  // and then fail later with a misleading "Promo modal did not open".
-  if (await looksLoggedOut(page)) {
-    plat.setValid(false);
-    return { result: 'not_logged_in', detail: `${plat.name} session expired — Settings → Log in to ${plat.name}` };
-  }
-  plat.setValid(true);
-
   // Scope to dialogs that contain an input so we never grab a cookie banner or
   // address confirmation modal that happens to appear at the same time.
   const modalSelector = '[role="dialog"]:has(input), [aria-modal="true"]:has(input)';
 
-  // Up to 3 attempts. The code-entry modal is sometimes covered by the
-  // messagingInterstitial or a promotional offer modal ("Enjoy 20% Off …")
-  // that has no input. Each pass: dismiss generic popups, dismiss any
-  // no-input dialog blocking the view, then look for the code-entry modal.
-  // Reload between attempts since a fresh visit re-opens the promos panel.
+  // Up to 3 attempts to open the code-entry modal. It's sometimes covered by the
+  // messagingInterstitial or a no-input offer modal ("Enjoy 20% Off …"), and the
+  // promo deep-link *occasionally* comes back as the logged-out landing page even
+  // when the session is actually valid — a transient blip that clears on retry.
+  // So we never conclude "logged out" from a single read: on a logged-out-looking
+  // page we warm the session via the home feed (which reliably re-establishes it)
+  // and retry. Each pass: dismiss generic popups + any no-input dialog, then look
+  // for the modal. Reload between attempts since a fresh visit re-opens the panel.
   let modalOpen = false;
+  let sawLoggedOut = false;
   for (let attempt = 0; attempt < 3 && !modalOpen; attempt++) {
     if (attempt > 0) {
+      if (sawLoggedOut && plat.homeUrl) {
+        // Warm-up: loading the home feed reliably restores the logged-in
+        // session/location before we retry the promo deep-link.
+        await page.goto(plat.homeUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+      }
       await page.goto(plat.promoUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await page.waitForTimeout(2500);
     }
     await dismissPopups(page);
     await dismissNoInputModal(page);
     modalOpen = await page.locator(modalSelector).first().isVisible({ timeout: 6000 }).catch(() => false);
+    if (!modalOpen) sawLoggedOut = await looksLoggedOut(page);
   }
 
   const modalLocator = page.locator(modalSelector).first();
   if (!modalOpen) {
-    // Modal didn't appear — take a debug screenshot and bail; typing into
-    // the global search bar (the next visible input) is worse than failing.
+    // Persistently couldn't open the modal — take a debug screenshot, then
+    // distinguish a genuinely dead session (still logged out after retries +
+    // warm-up) from a UI/modal problem while logged in.
     try {
       const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
       fs.mkdirSync(debugDir, { recursive: true });
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       await page.screenshot({ path: path.join(debugDir, `no-modal-${ts}.png`), fullPage: false });
     } catch {}
+    if (await looksLoggedOut(page)) {
+      plat.setValid(false);
+      return { result: 'not_logged_in', detail: `${plat.name} session expired — Settings → Log in to ${plat.name}` };
+    }
     return { result: 'error', detail: 'Promo modal did not open' };
   }
+
+  // Modal opened — the session is definitely valid.
+  plat.setValid(true);
 
   // Find the promo code input — scope to the modal so we never match the
   // global search bar. 'input[type="text"]' is intentionally excluded; it is
