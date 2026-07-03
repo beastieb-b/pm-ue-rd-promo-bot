@@ -620,8 +620,19 @@ async function runApplyCodes(options = {}) {
           applyResult = { result: ue.result, detail: `${ue.detail} · UberEats` };
           state.mergeCodeMeta(code, { appliedOn: 'ubereats' });
           results[results.length - 1] = { code, ...applyResult };
+        } else {
+          // Also failed on UberEats — keep the Postmates rejection, but note the
+          // UberEats outcome in the detail so the Results row tells the whole
+          // story without digging through the Activity Log.
+          const ueNote =
+            ue.result === 'rejected'
+              ? (ue.detail === applyResult.detail ? 'also on UberEats' : `UberEats: ${ue.detail}`)
+              : ue.result === 'not_logged_in'
+                ? 'UberEats: login needed'
+                : 'UberEats attempt errored';
+          applyResult = { result: applyResult.result, detail: `${applyResult.detail} · ${ueNote}` };
+          results[results.length - 1] = { code, ...applyResult };
         }
-        // else: also failed on UberEats → keep the original Postmates rejection.
       }
 
       // Permanent results (success / rejected) — mark and remove from queue
