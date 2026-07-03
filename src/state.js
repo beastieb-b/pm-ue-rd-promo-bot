@@ -558,6 +558,12 @@ function getStats() {
   const catalog = getCodeCatalog();
 
   const successes = processed.filter(r => r.result === 'success');
+  // "Already applied" successes are confirmations that a code from an earlier
+  // cycle is still on the account — not fresh wins. Their dollars were counted
+  // the month they originally applied, so they must not inflate this month's
+  // "codes applied" count (a "$0 saved across 1 code" hero makes no sense).
+  const isAlready = (r) => /^Already applied/.test(r.detail || '');
+  const freshSuccesses = successes.filter(r => !isAlready(r));
   const rejected = processed.filter(r => r.result === 'rejected');
   const rateLimited = processed.filter(r => r.result === 'ratelimited');
   const regionLocked = processed.filter(r => r.result === 'region_skip');
@@ -573,7 +579,8 @@ function getStats() {
     threadFreshness: getThreadFreshness(),
     queueCount: queue.length,
     totalTried: processed.length,
-    successCount: successes.length,
+    successCount: freshSuccesses.length,
+    alreadyOnAccountCount: successes.length - freshSuccesses.length,
     rejectedCount: rejected.length,
     rateLimitedCount: rateLimited.length,
     successRate: processed.length ? Math.round(successes.length / processed.length * 100) : 0,
@@ -585,7 +592,7 @@ function getStats() {
     appVersion: require('../package.json').version,
     heartbeat: getHeartbeat(),
     successCodes: successes.map(r => r.code),
-    successList: successes.map(r => ({ code: r.code, detail: r.detail })),
+    successList: successes.map(r => ({ code: r.code, detail: r.detail, already: isAlready(r) })),
     regionLockedCount: regionLocked.length,
     regionLockedList: regionLocked.map(r => ({ code: r.code, detail: r.detail })),
     recentResults: processed.slice(-20).reverse(),

@@ -131,8 +131,10 @@ function renderOverview() {
   setText('stat-saved', formatMoney(saved));
   const sub = document.getElementById('stat-saved-sub');
   if (sub) {
-    const n = stats.successCount ?? 0;
-    let text = n ? `across ${n} code${n !== 1 ? 's' : ''}` : 'no codes yet';
+    const n = stats.successCount ?? 0; // fresh wins only
+    const already = stats.alreadyOnAccountCount ?? 0;
+    let text = n ? `across ${n} code${n !== 1 ? 's' : ''}` : 'no new codes yet';
+    if (already) text += ` · ${already} earlier code${already !== 1 ? 's' : ''} still on the account`;
     const locked = stats.regionLockedCount ?? 0;
     if (locked) text += ` · ${locked} region-locked excluded`;
     // How much of the total came from the UberEats fallback.
@@ -197,8 +199,11 @@ function renderOverview() {
       const amount = chipAmount(item.detail);
       const valuePart = amount ? `<span class="success-chip-value">${escapeHtml(amount)}</span>` : '';
       const uePart = /ubereats/i.test(item.detail || '') ? '<span class="platform-tag">UberEats</span>' : '';
+      // "Already applied" = an earlier cycle's win still on the account — shown
+      // (it's live and usable) but labeled so it doesn't read as a fresh win.
+      const alreadyPart = item.already ? '<span class="platform-tag">already on account</span>' : '';
       return `<button class="success-chip" title="Click to copy ${escapeHtml(item.code)}" onclick="copyCode('${escapeHtml(item.code)}')">
-        <span class="success-chip-code">${escapeHtml(item.code)}</span>${valuePart}${uePart}
+        <span class="success-chip-code">${escapeHtml(item.code)}</span>${valuePart}${uePart}${alreadyPart}
       </button>`;
     }).join('');
   } else {
