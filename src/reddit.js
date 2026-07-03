@@ -321,15 +321,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
 // likely wasn't detected (e.g. the mods changed the title format) — surface that
 // as a dashboard banner instead of silently scanning last month's thread forever.
 function checkThreadStaleness() {
+  // Use UTC for BOTH the day and the month so they share one clock. The stored
+  // thread month is written in UTC (toISOString), so mixing a local getDate()
+  // with a UTC month created a ~7h window at each UTC month rollover where the
+  // month already read "new" while the local day was still last month's high
+  // number — which set a false "not detected" banner (before the new thread
+  // could exist) and, worse, an early `return` on getDate() < grace then skipped
+  // the clear branch so the false banner got stuck for days.
   const now = new Date();
-  if (now.getDate() < state.STALE_THREAD_GRACE_DAYS) return; // grace for a late post
+  const day = now.getUTCDate();
   const currentMonth = now.toISOString().slice(0, 7);
 
   const stale = [];
-  const pmMonth = state.getThreadMonth();
-  const ueMonth = state.getUEThreadMonth();
-  if (pmMonth && pmMonth < currentMonth) stale.push('r/postmates');
-  if (ueMonth && ueMonth < currentMonth) stale.push('r/UberEATS');
+  // A 1–2 day late post is normal, so only treat "still on last month" as a
+  // problem once we're past the grace window.
+  if (day >= state.STALE_THREAD_GRACE_DAYS) {
+    const pmMonth = state.getThreadMonth();
+    const ueMonth = state.getUEThreadMonth();
+    if (pmMonth && pmMonth < currentMonth) stale.push('r/postmates');
+    if (ueMonth && ueMonth < currentMonth) stale.push('r/UberEATS');
+  }
 
   const existing = state.getHealthWarning();
   if (stale.length) {
@@ -339,7 +350,8 @@ function checkThreadStaleness() {
       'thread_stale'
     );
   } else if (existing && existing.source === 'thread_stale') {
-    state.clearHealthWarning(); // new thread now detected — retire only our own banner
+    // Not stale (or still within grace) — always retire a leftover stale banner.
+    state.clearHealthWarning();
   }
 }
 

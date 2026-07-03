@@ -274,8 +274,11 @@ function computeThreadState(month, currentMonth, day) {
 }
 
 function getThreadFreshness() {
+  // UTC day to match the UTC-based month (and the UTC-stamped stored month) —
+  // a local getDate() here would disagree with the month for ~7h at each
+  // rollover, flipping a source to a bogus "waiting/stale" state.
   const now = new Date();
-  const day = now.getDate();
+  const day = now.getUTCDate();
   const currentMonth = now.toISOString().slice(0, 7);
   const sources = [
     { label: 'r/postmates', subreddit: 'postmates', threadId: getThreadId(), month: getThreadMonth(), detectedAt: getThreadDetectedAt() },
@@ -529,7 +532,7 @@ module.exports = {
   getTriedState, saveTriedState,
   getThreadId, getThreadMonth, saveThreadId,
   getThreadDetectedAt, getUEThreadDetectedAt,
-  getThreadFreshness,
+  getThreadFreshness, computeThreadState,
   STALE_THREAD_GRACE_DAYS,
   monthlyReset,
   getUEThreadId, getUEThreadMonth, saveUEThreadId,
