@@ -266,7 +266,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   }
   const triedState = getTriedState();
   const triedSet = new Set(triedState.tried_codes);
-  const newCodes = [...allCodes].filter(c => !triedSet.has(c)).sort();
+  const candidates = [...allCodes].filter(c => !triedSet.has(c)).sort();
+
+  // Skip codes already sitting on the account (applied within the last
+  // ~2 weeks — success or region_skip). After the monthly reset wipes
+  // tried_codes, last cycle's wins would otherwise be re-queued and burn an
+  // apply slot on "Oops, you already applied this promotion". They are NOT
+  // added to tried_codes, so once the window passes they become eligible again.
+  const recentlyApplied = state.getRecentlyApplied();
+  const newCodes = candidates.filter(c => !recentlyApplied.has(c));
+  const skippedApplied = candidates.filter(c => recentlyApplied.has(c));
+  const alreadyNoted = new Set(triedState.skipped_applied || []);
+  const newlySkipped = skippedApplied.filter(c => !alreadyNoted.has(c));
+  if (newlySkipped.length) {
+    state.appendLog({
+      type: 'applied_skip', source: label, codes: newlySkipped,
+      note: `already on the account (applied < ${state.REAPPLY_SKIP_DAYS}d ago)`,
+    });
+  }
+  triedState.skipped_applied = [...new Set([...alreadyNoted, ...skippedApplied])];
+
   const sourceUrl = `https://www.reddit.com/r/${subreddit}/comments/${newestEntry.id}/`;
   const entriesToQueue = newCodes.map(code => {
     const ctx = codeContext.get(code) || {};

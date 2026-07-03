@@ -668,9 +668,12 @@ async function testDetection() {
     const ok = verdict.result === 'rejected';
     state.appendLog({ type: 'self_test', code: fakeCode, result: verdict.result, ok });
     if (ok) {
-      state.clearHealthWarning(); // pipeline proven healthy — retire the banner
+      // Pipeline proven healthy — retire the banner, but never someone else's:
+      // a passing self-test says nothing about a stale monthly thread.
+      const existing = state.getHealthWarning();
+      if (!existing || existing.source !== 'thread_stale') state.clearHealthWarning();
     } else {
-      state.setHealthWarning(`Self-test failed: expected "rejected" but got "${verdict.result}". The Postmates UI may have changed.`);
+      state.setHealthWarning(`Self-test failed: expected "rejected" but got "${verdict.result}". The Postmates UI may have changed.`, 'self_test');
     }
     return {
       ok,

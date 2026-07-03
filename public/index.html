@@ -82,9 +82,9 @@
         <span class="health-banner-icon">🔑</span>
         <div class="health-banner-text">
           <strong>Postmates session expired</strong>
-          <span>Codes can't be applied until you log in again — go to Settings → Log in to Postmates.</span>
+          <span>Codes can't be applied until you log in again — one click opens Chrome on the server.</span>
         </div>
-        <a class="btn btn-secondary btn-sm" href="#settings" onclick="navigateTo('settings')" style="text-decoration:none;align-self:center">Settings</a>
+        <button class="btn btn-secondary btn-sm" id="banner-login-btn" onclick="triggerSetup('postmates', this)" style="align-self:center">🔐 Log in</button>
       </div>
 
       <!-- UberEats session banner — the rejection fallback needs an UberEats login -->
@@ -92,9 +92,9 @@
         <span class="health-banner-icon">🔑</span>
         <div class="health-banner-text">
           <strong>UberEats session expired</strong>
-          <span>Codes rejected on Postmates can't be retried on UberEats until you log in — go to Settings → Log in to UberEats.</span>
+          <span>Codes rejected on Postmates can't be retried on UberEats until you log in — one click opens Chrome on the server.</span>
         </div>
-        <a class="btn btn-secondary btn-sm" href="#settings" onclick="navigateTo('settings')" style="text-decoration:none;align-self:center">Settings</a>
+        <button class="btn btn-secondary btn-sm" id="ue-banner-login-btn" onclick="triggerSetup('ubereats', this)" style="align-self:center">🔐 Log in</button>
       </div>
 
       <!-- Setup Checklist (auto-hides when all required steps done) -->
@@ -175,6 +175,14 @@
             These applied but are locked to another area — <strong>not counted toward your total</strong>.
           </div>
           <div class="region-list" id="region-list"></div>
+        </div>
+
+        <div class="card" id="savings-graph-card" style="display:none">
+          <div class="card-header">
+            <h3>Savings by Month</h3>
+            <span class="card-badge" id="savings-graph-total"></span>
+          </div>
+          <div class="savings-graph" id="savings-graph"></div>
         </div>
 
         <div class="card" id="thread-status-card" style="display:none">

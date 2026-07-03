@@ -38,8 +38,14 @@ total** so the number stays honest.
 3. **Apply** — opens the Postmates promo modal in a real headed Chrome profile
    (Postmates blocks headless), types each code, clicks Apply, and reads the
    result. Max **5 codes per run**, **2 minutes apart**, to avoid rate limiting.
-   Codes are tried best-first (digit-containing → confidence → most recent);
-   nothing is ever skipped.
+   Codes are tried best-first (digit-containing → confidence → most recent).
+   When a scan queues **new** codes, an apply run starts **immediately** instead
+   of waiting for the next scheduled run (guarded: never while a run is active,
+   ≥30 min since the last run, and a 2 h backoff after any rate-limited run).
+   The only codes ever skipped are ones **already on the account** — applied
+   (success or region-locked) within the last **14 days** — since re-trying
+   those just returns "you already applied this promotion"; past that window
+   they become eligible again.
 4. **Classify & record** — `success` (with the discount), `rejected` (with the
    reason), `region_skip` (applied but locked to a non-home city), `ratelimited`
    (stops the run, keeps codes queued), or transient `error` (retried next run).
@@ -92,7 +98,7 @@ There is no login — access is gated by your network (Tailscale / LAN). Set
 
 | Section | What it shows |
 |---|---|
-| **Dashboard** | Total saved this month (region-locked codes excluded), codes applied, queue size, successful-code chips, recent activity, a "Worked, but region-locked" card, a **"This Month's Thread"** card (positive confirmation the new monthly thread was detected — shown through the first few days of each month, with a waiting/stale indicator if a source hasn't rolled over yet), and live source health. |
+| **Dashboard** | Total saved this month (region-locked codes excluded), codes applied, queue size, successful-code chips, recent activity, a "Worked, but region-locked" card, a **"Savings by Month"** chart, a **"This Month's Thread"** card (positive confirmation the new monthly thread was detected — shown through the first few days of each month, with a waiting/stale indicator if a source hasn't rolled over yet), and live source health. Session-expired banners have a **one-click "Log in"** button that opens Chrome on the server directly. |
 | **Queue** | Codes waiting to be tried, with source + region hints. Add codes manually. |
 | **Results** | Every attempt with result, reason, timestamp, and a link to the exact Reddit comment. Per-row actions: **↻ Retry** (failed), **📍 mark region-locked** (success that doesn't count), **✓$ count it** (region-locked that actually works), and delete. |
 | **Activity Log** | Raw event log. |
@@ -172,6 +178,7 @@ All state lives in `data/` (gitignored). Full-file writes are **atomic**
 | `processed.txt` | Results: `CODE⇥result⇥detail⇥timestamp`. |
 | `code_catalog.json` | Per-code metadata (source, region, comment link, confidence) + source health. |
 | `tried_codes.json` / `ue_tried_codes.json` | Codes already seen per subreddit (so they aren't re-queued). |
+| `applied_codes.json` | Codes that landed on the account (success/region-locked) with when — codes applied in the last 14 days aren't re-queued. |
 | `thread_config.txt` / `ue_thread_config.txt` | The current monthly thread IDs. |
 | `settings.json` | Intervals + home region. |
 | `heartbeat.json` | Last successful scan/apply (for the staleness watchdog). |
@@ -212,7 +219,9 @@ Key modules:
 - **"Not logged in"** — Settings → *Log in to Postmates*, log in, close Chrome.
 - **Results look wrong / nothing applies** — Settings → *System Health* → *Run
   Test*. It applies a fake code and expects a rejection; failure means the
-  Postmates UI likely changed.
+  Postmates UI likely changed. This same self-test also runs **automatically
+  every day at 4:45 AM PT** and raises the dashboard health banner on failure,
+  so UI breakage is caught within a day.
 - **"Scans stalled" banner** — the daemon isn't running or the Mac was asleep.
   `npm run restart`.
 - **Dashboard looks unstyled/old** — hard refresh (Cmd+Shift+R). Assets are

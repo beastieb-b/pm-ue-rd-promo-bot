@@ -67,6 +67,7 @@ let redditRunning = false;
 let applyRunning = false;
 let redditTask = null;
 let applyTask = null;
+let lastRateLimitedAt = null; // when an apply run last hit the rate limiter
 
 // Scan status — exposed to the server for the dashboard
 const scanStatus = {
@@ -115,6 +116,19 @@ async function runReddit() {
       console.log(`  r/postmates: ${pm?.threadId || '?'} | ${pm?.commentsScanned ?? 0} comments | ${pm?.newCodes ?? 0} new`);
       console.log(`  r/UberEATS:  ${ue?.threadId || '?'} | ${ue?.commentsScanned ?? 0} comments | ${ue?.newCodes ?? 0} new`);
       if (result.queued > 0) console.log(`  Queued: ${result.queued} codes`);
+
+      // Apply on arrival: fresh codes are time-sensitive (limited redemptions),
+      // so start an apply run now instead of waiting up to 2h for the cron.
+      // shouldApplyOnArrival is rate-limit conservative: never while a run is
+      // active, ≥30 min since the last run, and a 2h backoff after any
+      // rate-limited run. lastApplyAt falls back to the persisted heartbeat so
+      // a daemon restart can't bypass the gap.
+      const lastApply = scanStatus.lastApplyAt || state.getHeartbeat()?.apply || null;
+      if (settings.shouldApplyOnArrival({ queued: result.queued, applyRunning, lastApplyAt: lastApply, lastRateLimitedAt })) {
+        state.appendLog({ type: 'apply_on_arrival', queued: result.queued });
+        console.log(`  ⚡ ${result.queued} new code(s) — starting apply run now`);
+        runApply(); // deliberately not awaited — the scan result returns immediately
+      }
     }
     server.broadcast({ type: 'reddit_done', ...result, scanStatus });
     return result;
@@ -161,6 +175,7 @@ async function runApply(options = {}) {
     updateNextScanTime(); // refresh next-apply (and next-scan) projections
     scanStatus.applyRunning = false;
     scanStatus.applyCurrentCode = null;
+    if (result.rateLimited) lastRateLimitedAt = new Date(); // suppresses apply-on-arrival for 2h
     if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
     server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;
@@ -227,6 +242,25 @@ async function main() {
 
   const s = settings.load();
   reschedule(s);
+
+  // Daily self-test at 4:45am PT (clear of the :00/:30 scans and even-hour
+  // applies): applies a fake code and expects a rejection, so a Postmates UI
+  // change is caught within a day — with the health banner raised — instead of
+  // whenever real codes start silently misbehaving.
+  cron.schedule('45 4 * * *', async () => {
+    if (applyRunning || redditRunning) {
+      console.log('Daily self-test skipped — a run is in progress (will retry tomorrow)');
+      return;
+    }
+    console.log('Running daily self-test...');
+    try {
+      const result = await postmates.testDetection();
+      server.broadcast({ type: 'self_test_done', ...result });
+      console.log(result.ok ? '  ✅ Self-test passed' : `  ⚠️ Self-test failed: ${result.error || result.message}`);
+    } catch (err) {
+      console.error('  Self-test crashed:', err.message);
+    }
+  }, { timezone: 'America/Los_Angeles' });
 
   // Run Reddit check immediately on startup
   await runReddit();

@@ -243,8 +243,28 @@ function invalidateSetupStatus() {
   setupStatusCacheAt = 0;
 }
 
+// Gate for "apply on arrival": a scan just queued new codes → start an apply
+// run now instead of waiting up to 2h for the cron. Deliberately conservative
+// about rate limits: never while a run is active, never within minGapMs of the
+// last run (scans fire every 30 min, so this caps on-arrival runs at ~2/hour),
+// and never within backoffMs after a run that hit the rate limiter — after a
+// rate limit, only the scheduled cron applies.
+function shouldApplyOnArrival({
+  queued, applyRunning, lastApplyAt, lastRateLimitedAt,
+  now = Date.now(),
+  minGapMs = 30 * 60 * 1000,
+  backoffMs = 2 * 60 * 60 * 1000,
+}) {
+  if (!queued || queued <= 0) return false;
+  if (applyRunning) return false;
+  if (lastRateLimitedAt && now - new Date(lastRateLimitedAt).getTime() < backoffMs) return false;
+  if (lastApplyAt && now - new Date(lastApplyAt).getTime() < minGapMs) return false;
+  return true;
+}
+
 module.exports = {
   load, save, hoursToCron, nextRunFromInterval,
   normalizeInterval, SCAN_INTERVALS, APPLY_INTERVALS,
+  shouldApplyOnArrival,
   isLoggedIn, isLoggedInUberEats, hasOldCronJob, isServiceInstalled, getSetupStatus, invalidateSetupStatus, DEFAULTS,
 };

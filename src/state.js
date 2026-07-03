@@ -175,7 +175,47 @@ function markResult(code, result, detail = null) {
   const safeDetail = detail ? detail.replace(/[\t\n\r]/g, ' ').slice(0, 120) : '';
   const ts = new Date().toISOString();
   fs.appendFileSync(cfg.PROCESSED_FILE, `${normalized}\t${result}\t${safeDetail}\t${ts}\n`);
+  // Success AND region_skip both mean the code landed on the account — record
+  // them so a scan won't re-queue the code while it's still sitting there.
+  if (result === 'success' || result === 'region_skip') recordApplied(normalized);
   return true;
+}
+
+// ── Applied-codes ledger ─────────────────────────────────────────────────────
+// Codes that actually landed on the account (success or region_skip), with when.
+// Scans skip re-queueing a code applied within REAPPLY_SKIP_DAYS — e.g. after
+// the monthly reset wipes tried_codes, last cycle's wins would otherwise be
+// re-tried and burn an apply slot on "Oops, you already applied this promotion".
+// Past the window the code is eligible again (promos do get refreshed).
+
+const REAPPLY_SKIP_DAYS = 14;
+
+function loadAppliedLedger() {
+  try { return JSON.parse(fs.readFileSync(cfg.APPLIED_LEDGER_FILE, 'utf8')); }
+  catch { return {}; }
+}
+
+function recordApplied(code, ts = new Date().toISOString()) {
+  const ledger = loadAppliedLedger();
+  ledger[code] = ts;
+  // Prune entries old enough that they can never matter again.
+  const cutoff = Date.now() - REAPPLY_SKIP_DAYS * 2 * 86400000;
+  for (const [c, t] of Object.entries(ledger)) {
+    const ms = new Date(t).getTime();
+    if (isNaN(ms) || ms < cutoff) delete ledger[c];
+  }
+  writeFileAtomic(cfg.APPLIED_LEDGER_FILE, JSON.stringify(ledger, null, 2));
+}
+
+// Set of codes applied within the last `days`. `ledger` is injectable for tests.
+function getRecentlyApplied(days = REAPPLY_SKIP_DAYS, ledger = loadAppliedLedger(), now = Date.now()) {
+  const cutoff = now - days * 86400000;
+  const out = new Set();
+  for (const [code, ts] of Object.entries(ledger)) {
+    const ms = new Date(ts).getTime();
+    if (!isNaN(ms) && ms >= cutoff) out.add(code);
+  }
+  return out;
 }
 
 // Put a processed code back in the queue to be tried again. Removes it from
@@ -461,6 +501,40 @@ function sumArchiveSavings() {
   }
 }
 
+// Fixed-dollar savings bucketed by calendar month (from row timestamps), across
+// every archived cycle plus the current one. Old migrated rows without a
+// timestamp carry no dollar detail either, so skipping them loses nothing.
+// The current month is always present (even at $0) so the graph shows "so far".
+function getMonthlySavings() {
+  const buckets = {};
+  const addFile = (file) => {
+    let lines;
+    try { lines = fs.readFileSync(file, 'utf8').split('\n').map(l => l.trim()).filter(Boolean); }
+    catch { return; }
+    for (const line of lines) {
+      if (!line.includes('\t')) continue;
+      const [, result, detail, ts] = line.split('\t');
+      if (result !== 'success' || !ts) continue;
+      const month = ts.slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(month)) continue;
+      buckets[month] = (buckets[month] || 0) + parseSavings(detail);
+    }
+  };
+  try {
+    if (fs.existsSync(cfg.ARCHIVE_DIR)) {
+      for (const f of fs.readdirSync(cfg.ARCHIVE_DIR).filter(f => f.endsWith('-processed.txt'))) {
+        addFile(path.join(cfg.ARCHIVE_DIR, f));
+      }
+    }
+  } catch {}
+  addFile(cfg.PROCESSED_FILE);
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  if (!(thisMonth in buckets)) buckets[thisMonth] = 0;
+  return Object.entries(buckets)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([month, saved]) => ({ month, saved }));
+}
+
 // When the cycle last turned over — derived from the newest archive filename
 // (YYYY-MM-DD-...). Returns an ISO date string or null if it's never reset.
 function getLastResetDate() {
@@ -506,6 +580,7 @@ function getStats() {
     savedThisMonth,
     savedLastMonth,
     savedLifetime: savedThisMonth + sumArchiveSavings(),
+    monthlySavings: getMonthlySavings(),
     lastResetDate: getLastResetDate(),
     appVersion: require('../package.json').version,
     heartbeat: getHeartbeat(),
@@ -539,6 +614,8 @@ module.exports = {
   getUETriedState, saveUETriedState,
   ueMonthlyReset,
   appendLog, getLog,
+  recordApplied, getRecentlyApplied, REAPPLY_SKIP_DAYS,
+  getMonthlySavings,
   setHealthWarning, getHealthWarning, clearHealthWarning,
   getHeartbeat, recordHeartbeat,
   parseSavings, sumSavings,

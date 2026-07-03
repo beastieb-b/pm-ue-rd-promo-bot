@@ -931,6 +931,42 @@ a.meta-pill.source:hover { background: rgba(10, 132, 255, 0.28); }
   padding: 4px 0;
 }
 
+/* "Savings by Month" column chart */
+.savings-graph {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 18px 16px 14px;
+}
+.savings-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.savings-col-bar {
+  width: 100%;
+  max-width: 46px;
+  background: var(--green);
+  opacity: 0.55;
+  border-radius: 6px 6px 2px 2px;
+}
+.savings-col.current .savings-col-bar { opacity: 1; }
+.savings-col-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  white-space: nowrap;
+}
+.savings-col-label {
+  font-size: 11px;
+  color: var(--label-3, #8E8E93);
+}
+.savings-col.current .savings-col-label { color: var(--label-1, #fff); font-weight: 600; }
+
 /* "This Month's Thread" confirmation card */
 .thread-status-list { padding: 4px 0; }
 .thread-status-row {

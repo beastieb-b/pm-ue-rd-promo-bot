@@ -183,6 +183,7 @@ function renderOverview() {
   }
 
   renderThreadFreshness(stats.threadFreshness);
+  renderSavingsGraph(stats.monthlySavings);
 
   const successEl = document.getElementById('success-list');
   const count = document.getElementById('success-count');
@@ -327,7 +328,7 @@ function renderScanStatus() {
   // Show BOTH cadences so it's clear auto-scan AND auto-apply are running.
   const parts = [];
   parts.push(`<span class="scan-meta-item">Scan every <strong>${formatInterval(s.intervalHours)}</strong></span>`);
-  parts.push(`<span class="scan-meta-item">Apply every <strong>${formatInterval(currentSettings.applyIntervalHours)}</strong></span>`);
+  parts.push(`<span class="scan-meta-item" title="New codes trigger an apply run immediately (rate-limit guarded)">Apply every <strong>${formatInterval(currentSettings.applyIntervalHours)}</strong> + new codes instantly</span>`);
   if (s.nextScanAt) {
     const diff = new Date(s.nextScanAt) - Date.now();
     parts.push(`<span class="scan-meta-item">Next scan <strong>${diff > 0 ? 'in ' + formatDuration(diff) : 'any moment'}</strong></span>`);
@@ -784,6 +785,8 @@ function eventLabel(type) {
     code_result: 'Code result',
     code_deferred: 'Code deferred',
     code_skipped: 'Code skipped',
+    apply_on_arrival: 'Instant apply (new codes)',
+    applied_skip: 'Skipped — already on account',
     rate_limited: 'Rate limited',
     detection_health_warning: 'Health warning',
     self_test: 'Self-test',
@@ -947,6 +950,10 @@ function handleSSE(data) {
       const ok = isUE ? data.ueLoggedIn : data.loggedIn;
       const btn = document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
       if (btn) btn.disabled = false;
+      // Reset the banner login buttons too (the banner hides on success, but on
+      // a failed login it stays — the button must be clickable again).
+      const bannerBtn = document.getElementById(isUE ? 'ue-banner-login-btn' : 'banner-login-btn');
+      if (bannerBtn) { bannerBtn.disabled = false; bannerBtn.textContent = '🔐 Log in'; }
       renderSettings();
       renderSetupChecklist();
       renderLoginBanner();
@@ -1135,10 +1142,12 @@ function handleSelfTestDone(data) {
   showToast(data.ok ? 'Self-test passed — detection pipeline healthy ✅' : `Self-test failed: ${data.message || data.error}`, data.ok ? 'success' : 'error');
 }
 
-async function triggerSetup(target = 'postmates') {
+async function triggerSetup(target = 'postmates', btnEl = null) {
   const isUE = target === 'ubereats';
   const name = isUE ? 'UberEats' : 'Postmates';
-  const btn = document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
+  // btnEl lets the session-banner button show its own progress; the Settings
+  // page button is the default.
+  const btn = btnEl || document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Opening Chrome...'; }
   showToast(`Opening Chrome for ${name} login — log in then close the window`);
   try {
@@ -1382,6 +1391,37 @@ function threadBadgeIcon(freshness) {
   if (states.includes('waiting')) return '⏳';
   if (states.length && states.every(s => s === 'found')) return '✓';
   return '';
+}
+
+// "Savings by Month" card — a simple column chart of fixed-dollar savings per
+// calendar month (last 6 months, current month always included). Hidden until
+// there's at least one month with actual savings.
+function renderSavingsGraph(monthly) {
+  const card = document.getElementById('savings-graph-card');
+  const el = document.getElementById('savings-graph');
+  const totalBadge = document.getElementById('savings-graph-total');
+  if (!card || !el) return;
+
+  const data = (monthly || []).slice(-6);
+  const hasSavings = data.some(m => m.saved > 0);
+  if (!hasSavings) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const max = Math.max(...data.map(m => m.saved), 1);
+  const total = data.reduce((s, m) => s + m.saved, 0);
+  if (totalBadge) totalBadge.textContent = `${formatMoney(total)} total`;
+
+  el.innerHTML = data.map(m => {
+    const [y, mo] = m.month.split('-');
+    const label = new Date(y, mo - 1).toLocaleString('en-US', { month: 'short' });
+    const px = m.saved > 0 ? Math.max(Math.round((m.saved / max) * 90), 6) : 2;
+    const isCurrent = m.month === new Date().toISOString().slice(0, 7);
+    return `<div class="savings-col${isCurrent ? ' current' : ''}" title="${escapeHtml(m.month)}: ${escapeHtml(formatMoney(m.saved))}">
+      <span class="savings-col-value">${escapeHtml(formatMoney(m.saved))}</span>
+      <div class="savings-col-bar" style="height:${px}px"></div>
+      <span class="savings-col-label">${escapeHtml(label)}</span>
+    </div>`;
+  }).join('');
 }
 
 // "This Month's Thread" card — positive confirmation that the new monthly
