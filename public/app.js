@@ -1501,6 +1501,13 @@ async function copyCode(code) {
   }
 }
 
+// Machine reasons → human phrasing for the Activity Log. Unmapped reasons fall
+// through as "reason: X" so nothing is ever silently dropped.
+const REASON_LABELS = {
+  no_pending_codes: 'no codes in queue — nothing to do',
+  not_logged_in: 'login needed',
+};
+
 function formatLogDetail(entry) {
   const parts = [];
   if (entry.source) parts.push(`source: ${entry.source}`);
@@ -1510,7 +1517,10 @@ function formatLogDetail(entry) {
   if (entry.queued !== undefined) parts.push(`${entry.queued} queued`);
   if (entry.applied !== undefined) parts.push(`${entry.applied} applied`);
   if (entry.code) parts.push(`code: ${entry.code}`);
+  if (Array.isArray(entry.codes)) parts.push(entry.codes.join(', '));
   if (entry.result) parts.push(entry.result);
+  if (entry.reason) parts.push(REASON_LABELS[entry.reason] || `reason: ${entry.reason}`);
+  if (entry.note) parts.push(entry.note);
   if (entry.error) parts.push(`ERROR: ${entry.error}`);
   if (entry.detail) parts.push(entry.detail);
   if (entry.old_thread) parts.push(`${entry.old_thread} → ${entry.new_thread}`);
