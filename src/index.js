@@ -68,6 +68,13 @@ let applyRunning = false;
 let redditTask = null;
 let applyTask = null;
 let lastRateLimitedAt = null; // when an apply run last hit the rate limiter
+// When an apply run last ACTUALLY attempted codes. Deliberately not
+// scanStatus.lastApplyAt: the cron regularly fires no-op runs ("no codes in
+// queue") that touch neither Chrome nor Postmates, and one of those landing
+// seconds before a scan queues a new code must not hold the on-arrival apply
+// hostage to the 30-min gap (the gap exists to space real, rate-budget-
+// spending runs).
+let lastCodeApplyAt = null;
 
 // Scan status — exposed to the server for the dashboard
 const scanStatus = {
@@ -120,10 +127,11 @@ async function runReddit() {
       // Apply on arrival: fresh codes are time-sensitive (limited redemptions),
       // so start an apply run now instead of waiting up to 2h for the cron.
       // shouldApplyOnArrival is rate-limit conservative: never while a run is
-      // active, ≥30 min since the last run, and a 2h backoff after any
-      // rate-limited run. lastApplyAt falls back to the persisted heartbeat so
-      // a daemon restart can't bypass the gap.
-      const lastApply = scanStatus.lastApplyAt || state.getHeartbeat()?.apply || null;
+      // active, ≥30 min since the last run that actually attempted codes
+      // (no-op cron wake-ups don't count), and a 2h backoff after any
+      // rate-limited run. Falls back to the persisted heartbeat after a daemon
+      // restart — conservative, since the heartbeat also records no-op runs.
+      const lastApply = lastCodeApplyAt || state.getHeartbeat()?.apply || null;
       if (settings.shouldApplyOnArrival({ queued: result.queued, applyRunning, lastApplyAt: lastApply, lastRateLimitedAt })) {
         state.appendLog({ type: 'apply_on_arrival', queued: result.queued });
         console.log(`  ⚡ ${result.queued} new code(s) — starting apply run now`);
@@ -176,6 +184,7 @@ async function runApply(options = {}) {
     scanStatus.applyRunning = false;
     scanStatus.applyCurrentCode = null;
     if (result.rateLimited) lastRateLimitedAt = new Date(); // suppresses apply-on-arrival for 2h
+    if (!result.error && (result.applied ?? 0) > 0) lastCodeApplyAt = new Date(); // real run — starts the on-arrival gap
     if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
     server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;
