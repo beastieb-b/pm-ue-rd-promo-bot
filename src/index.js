@@ -132,7 +132,14 @@ async function runReddit() {
       // rate-limited run. Falls back to the persisted heartbeat after a daemon
       // restart — conservative, since the heartbeat also records no-op runs.
       const lastApply = lastCodeApplyAt || state.getHeartbeat()?.apply || null;
-      if (settings.shouldApplyOnArrival({ queued: result.queued, applyRunning, lastApplyAt: lastApply, lastRateLimitedAt })) {
+      // Rate-limit backoff survives restarts via the heartbeat (in-memory alone
+      // would let a restart inside the 2h window bypass the backoff).
+      const lastRateLimit = lastRateLimitedAt || state.getHeartbeat()?.ratelimited || null;
+      if (result.queued > 0 && postmates.isBusy()) {
+        // The browser is held by the self-test or a login window — an apply run
+        // would just error "already running". Codes wait for the next cron.
+        state.appendLog({ type: 'apply_on_arrival_skipped', queued: result.queued, note: 'browser busy (self-test or login) — codes wait for the next scheduled run' });
+      } else if (settings.shouldApplyOnArrival({ queued: result.queued, applyRunning, lastApplyAt: lastApply, lastRateLimitedAt: lastRateLimit })) {
         state.appendLog({ type: 'apply_on_arrival', queued: result.queued });
         console.log(`  ⚡ ${result.queued} new code(s) — starting apply run now`);
         runApply(); // deliberately not awaited — the scan result returns immediately
@@ -183,7 +190,10 @@ async function runApply(options = {}) {
     updateNextScanTime(); // refresh next-apply (and next-scan) projections
     scanStatus.applyRunning = false;
     scanStatus.applyCurrentCode = null;
-    if (result.rateLimited) lastRateLimitedAt = new Date(); // suppresses apply-on-arrival for 2h
+    if (result.rateLimited) {
+      lastRateLimitedAt = new Date(); // suppresses apply-on-arrival for 2h
+      state.recordHeartbeat('ratelimited'); // persisted — survives a daemon restart
+    }
     if (!result.error && (result.applied ?? 0) > 0) lastCodeApplyAt = new Date(); // real run — starts the on-arrival gap
     if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
     server.broadcast({ type: 'apply_done', ...result, scanStatus });

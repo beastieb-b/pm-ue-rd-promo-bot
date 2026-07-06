@@ -791,6 +791,7 @@ function eventLabel(type) {
     code_deferred: 'Code deferred',
     code_skipped: 'Code skipped',
     apply_on_arrival: 'Instant apply (new codes)',
+    apply_on_arrival_skipped: 'Instant apply deferred',
     applied_skip: 'Skipped — already on account',
     ubereats_fallback_retry: 'UberEats retry (transient error)',
     rate_limited: 'Rate limited',

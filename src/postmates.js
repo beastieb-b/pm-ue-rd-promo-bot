@@ -24,6 +24,11 @@ let _sessionState = (() => {
 function persistSessionState() {
   try { fs.writeFileSync(cfg.SESSION_STATE_FILE, JSON.stringify(_sessionState)); } catch {}
 }
+// True while the browser is held by an apply run, the self-test, or a login
+// window — index.js checks this before firing an on-arrival apply, because its
+// own applyRunning flag doesn't cover the self-test/setup paths.
+function isBusy() { return _applyRunning || _setupRunning; }
+
 function getSessionValid() { return _sessionState.sessionValid; }
 function setSessionValid(v) { _sessionState.sessionValid = v; persistSessionState(); }
 function getUeSessionValid() { return _sessionState.ueSessionValid; }
@@ -638,7 +643,9 @@ async function runApplyCodes(options = {}) {
       // Permanent results (success / rejected) — mark and remove from queue
       state.markResult(code, applyResult.result, applyResult.detail);
 
-      if (applyResult.result === 'success') {
+      if (applyResult.result === 'success' && !/^Already applied/.test(applyResult.detail || '')) {
+        // Fresh wins only — "Already applied" confirms an earlier cycle's code
+        // is still on the account; texting a success for it is just noise.
         notifySuccess(code, applyResult.detail);
       }
 
@@ -720,4 +727,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, testDetection };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection };

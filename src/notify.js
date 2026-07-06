@@ -18,7 +18,9 @@ function sendIMessage(message) {
 }
 
 function notifySuccess(code, savings) {
-  const msg = `✅ Postmates promo code applied: ${code}${savings ? ` — ${savings}` : ''}`;
+  // Platform-neutral: the detail already carries "· UberEats" when the win
+  // came from the fallback, so a hardcoded "Postmates" would be wrong there.
+  const msg = `✅ Promo code applied: ${code}${savings ? ` — ${savings}` : ''}`;
   sendIMessage(msg);
 }
 
