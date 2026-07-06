@@ -238,24 +238,47 @@ function reschedule(newSettings) {
 // Expose reschedule + getScanStatus so server can use them
 server.registerTriggers(runReddit, runApply, reschedule, getScanStatus);
 
+// Housekeeping that keeps long uptimes healthy. The daemon runs for weeks under
+// KeepAlive, so startup-only cleanup isn't enough — this runs at boot AND daily
+// at 4:20am (clear of the :00/:30 scans, even-hour applies, and 4:45 self-test).
+function runMaintenance(reason) {
+  const trim = (file, maxLines, keepLines) => {
+    try {
+      if (!fs.existsSync(file)) return;
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
+      if (lines.length > maxLines) {
+        // launchd opens the daemon logs with O_APPEND before exec, so writes
+        // always go to the real end — rewriting the content here is safe.
+        fs.writeFileSync(file, lines.slice(-keepLines).join('\n') + '\n');
+        console.log(`[maintenance:${reason}] Trimmed ${path.basename(file)} (${lines.length} → ${keepLines} lines)`);
+      }
+    } catch {}
+  };
+  trim(path.join(cfg.DATA_DIR, 'daemon.log'), 1200, 1000);
+  trim(path.join(cfg.DATA_DIR, 'daemon-error.log'), 1200, 1000);
+  // The Activity Log endpoint parses this whole file per view; unbounded growth
+  // (~10MB/year) makes that slower every month. 5000 entries ≈ several weeks.
+  trim(cfg.LOG_FILE, 6000, 5000);
+  // Each failed apply saves a ~400KB debug screenshot; a broken-UI stretch can
+  // add MBs per day. Two weeks is plenty for diagnosis.
+  try {
+    const dir = path.join(cfg.DATA_DIR, 'debug-screenshots');
+    const cutoff = Date.now() - 14 * 86400000;
+    for (const f of fs.readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (fs.statSync(p).mtimeMs < cutoff) {
+        fs.unlinkSync(p);
+        console.log(`[maintenance:${reason}] Pruned old debug screenshot ${f}`);
+      }
+    }
+  } catch {}
+}
+
 async function main() {
   console.log('🍔 Postmates Promo Daemon starting...');
 
-  // Trim the daemon logs to the last 1000 lines whenever they grow past 1200.
-  // launchd opens the files with O_APPEND before exec, so writes always go to
-  // the real end — trimming the content at startup is safe. Covers both the
-  // stdout log (daemon.log) and the stderr log (daemon-error.log).
-  for (const name of ['daemon.log', 'daemon-error.log']) {
-    try {
-      const file = path.join(cfg.DATA_DIR, name);
-      if (!fs.existsSync(file)) continue;
-      const lines = fs.readFileSync(file, 'utf8').split('\n');
-      if (lines.length > 1200) {
-        fs.writeFileSync(file, lines.slice(-1000).join('\n') + '\n');
-        console.log(`[startup] Trimmed ${name} (${lines.length} → 1000 lines)`);
-      }
-    } catch {}
-  }
+  runMaintenance('startup');
+  cron.schedule('20 4 * * *', () => runMaintenance('daily'), { timezone: 'America/Los_Angeles' });
 
   await server.start();
 

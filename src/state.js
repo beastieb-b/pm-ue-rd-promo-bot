@@ -361,8 +361,14 @@ function monthlyReset(oldThreadId, newThreadId, newMonth) {
 // ── Log ─────────────────────────────────────────────────────────────────────
 
 function appendLog(entry) {
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
-  fs.appendFileSync(cfg.LOG_FILE, line + '\n');
+  // Logging must never take down a scan/apply run — a full disk or a
+  // permissions hiccup on the log file is not worth crashing for.
+  try {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+    fs.appendFileSync(cfg.LOG_FILE, line + '\n');
+  } catch (err) {
+    console.error('appendLog failed:', err.message);
+  }
 }
 
 function getLog(limit = 200) {
