@@ -1,4 +1,4 @@
-# 🍔 Postmates Promo Tracker
+# 🍔 Promo Tracker
 
 Automatically finds **existing-user** promo codes for Postmates, applies them to
 your account, and tracks how much you've actually saved — all from a local web
