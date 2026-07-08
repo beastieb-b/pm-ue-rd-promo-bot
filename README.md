@@ -4,8 +4,7 @@ Automatically finds **existing-user** promo codes for Postmates, applies them to
 your account, and tracks how much you've actually saved — all from a local web
 dashboard.
 
-It monitors the monthly promo-code threads on **r/postmates** and **r/UberEATS**
-(UberEats codes work on Postmates too), extracts the codes, and applies each one
+It monitors the monthly promo-code threads, extracts the codes, and applies each one
 through a real logged-in Chrome session. Codes that Postmates reports as locked
 to another city (e.g. "Las Vegas") are detected and **excluded from your savings
 total** so the number stays honest.
@@ -16,7 +15,7 @@ total** so the number stays honest.
 
 ```
                  ┌───────────────────────── daemon (launchd) ─────────────────────────┐
-  every 30 min   │  Reddit scan  ──▶  extract codes  ──▶  queue (priority-ordered)     │
+  every 30 min   │  scan  ──▶  extract codes  ──▶  queue (priority-ordered)     │
   every 2 h      │  Apply run    ──▶  open promo modal in Chrome  ──▶  type + apply     │
                  │                     └▶ detect result: success / rejected / region    │
                  └───────────────────────────────────────────────────────────────────┘
