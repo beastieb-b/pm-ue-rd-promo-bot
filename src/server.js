@@ -206,16 +206,32 @@ app.post('/api/self-test', async (req, res) => {
 app.post('/api/setup', async (req, res) => {
   const postmates = require('./postmates');
   const target = req.body && req.body.target === 'ubereats' ? 'ubereats' : 'postmates';
+  // The browser is single-tenant: an apply run, the self-test, or the
+  // post-login session probe may be holding it (the probe runs right after
+  // every login, so back-to-back logins hit this window routinely). Answer in
+  // the HTTP response so the client can reset its button and say why — the
+  // fire-and-forget SSE error path is a bad fit for a synchronous "not now".
+  if (postmates.isBusy()) {
+    return res.json({ started: false, busy: true, message: 'Browser is busy (apply run or session check) — try again in a moment.' });
+  }
   res.json({ started: true });
   try {
     await postmates.setupLogin({ target });
     settings.invalidateSetupStatus();
+    // Immediate feedback from the cookie check — the login window just closed.
     broadcast({
       type: 'setup_done',
       target,
       loggedIn: settings.isLoggedIn(),
       ueLoggedIn: settings.isLoggedInUberEats(),
     });
+    // Then actively verify the session with a real navigation, so the card
+    // doesn't sit at "Unverified" waiting for the next apply run to happen to
+    // exercise this platform (for UberEats that can be days — fallbacks are
+    // sporadic). Definitive outcomes flip the session flag; the dashboard's
+    // tri-state resolves on the next stats poll/broadcast.
+    const v = await postmates.verifySession(target);
+    broadcast({ type: 'session_verified', platform: target, ok: v.verified, error: v.error || null });
   } catch (err) {
     broadcast({ type: 'error', message: `Setup failed: ${err.message}` });
   }

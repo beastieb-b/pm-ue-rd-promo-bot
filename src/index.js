@@ -302,6 +302,20 @@ async function main() {
     } catch (err) {
       console.error('  Self-test crashed:', err.message);
     }
+    // The self-test exercises the Postmates session end-to-end, but nothing
+    // touches the UberEats session between (sporadic) fallback attempts — an
+    // expired UE login could otherwise sit undetected for days, and a fresh
+    // one could sit "Unverified" just as long. Probe it daily (navigation
+    // only, nothing applied).
+    try {
+      const v = await postmates.verifySession('ubereats');
+      server.broadcast({ type: 'session_verified', platform: 'ubereats', ok: v.verified, error: v.error || null });
+      console.log(v.verified === true ? '  ✅ UberEats session verified'
+        : v.verified === false ? '  ⚠️ UberEats session expired — dashboard banner raised'
+        : `  ❓ UberEats session check inconclusive${v.error ? ` (${v.error})` : ''}`);
+    } catch (err) {
+      console.error('  UberEats session check crashed:', err.message);
+    }
   }, { timezone: 'America/Los_Angeles' });
 
   // Run Reddit check immediately on startup

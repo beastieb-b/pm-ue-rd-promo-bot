@@ -220,7 +220,12 @@ Key modules:
   Test*. It applies a fake code and expects a rejection; failure means the
   Postmates UI likely changed. This same self-test also runs **automatically
   every day at 4:45 AM PT** and raises the dashboard health banner on failure,
-  so UI breakage is caught within a day.
+  so UI breakage is caught within a day. The daily job also **probes the
+  UberEats session** (navigation only — nothing is applied), so an expired
+  UberEats login is flagged within a day instead of being discovered mid-apply.
+- **Login shows "Unverified"** — sessions are verified by a real navigation
+  **right after each login**, by the daily 4:45 AM check, and by apply runs;
+  the state resolves on its own within moments of logging in.
 - **"Scans stalled" banner** — the daemon isn't running or the Mac was asleep.
   `npm run restart`.
 - **Dashboard looks unstyled/old** — hard refresh (Cmd+Shift+R). Assets are

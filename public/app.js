@@ -463,7 +463,7 @@ function renderLoginCard(loggedIn, badgeId, descId, btnId, name) {
     desc.textContent = loggedIn === true
       ? 'Session confirmed working.'
       : loggedIn === null
-        ? "A saved session exists but hasn't been verified yet — it'll be confirmed on the next Apply Codes run."
+        ? "A saved session exists but hasn't been verified yet — it's checked automatically right after login, by the daily 4:45 AM check, and on apply runs."
         : `Not logged in or session expired. Click the button to open Chrome and log into ${name}.`;
   }
   if (btn && document.activeElement !== btn) {
@@ -792,6 +792,7 @@ function eventLabel(type) {
     code_skipped: 'Code skipped',
     apply_on_arrival: 'Instant apply (new codes)',
     apply_on_arrival_skipped: 'Instant apply deferred',
+    session_verified: 'Session check',
     applied_skip: 'Skipped — already on account',
     ubereats_fallback_retry: 'UberEats retry (transient error)',
     rate_limited: 'Rate limited',
@@ -950,11 +951,16 @@ function handleSSE(data) {
       break;
 
     case 'setup_done': {
-      stats.loggedIn = data.loggedIn;
-      stats.ueLoggedIn = data.ueLoggedIn;
       const isUE = data.target === 'ubereats';
       const name = isUE ? 'UberEats' : 'Postmates';
       const ok = isUE ? data.ueLoggedIn : data.loggedIn;
+      // data.loggedIn/ueLoggedIn are cookie-presence BOOLEANS — evidence the
+      // login saved, not that the session works. The server just reset the
+      // target's flag to null and is verifying it right now, so the tri-state
+      // for the target is null ("verifying"), never a premature "✓ Logged In"
+      // that the next stats poll would contradict. session_verified resolves it.
+      if (isUE) stats.ueLoggedIn = ok ? null : false;
+      else stats.loggedIn = ok ? null : false;
       const btn = document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
       if (btn) btn.disabled = false;
       // Reset the banner login buttons too (the banner hides on success, but on
@@ -964,7 +970,27 @@ function handleSSE(data) {
       renderSettings();
       renderSetupChecklist();
       renderLoginBanner();
-      showToast(ok ? `${name} login successful ✅` : `Chrome closed — ${name} session not detected`, ok ? 'success' : 'error');
+      showToast(ok ? `${name} login saved — verifying session…` : `Chrome closed — ${name} session not detected`, ok ? 'success' : 'error');
+      break;
+    }
+
+    // Active session probe result (runs right after a login and daily at
+    // 4:45 AM). true/false are definitive and update the tri-state; null is
+    // inconclusive — the flag stays unchanged, but the user was promised a
+    // verification ("verifying session…"), so say so rather than leaving the
+    // promise dangling forever.
+    case 'session_verified': {
+      const isUE = data.platform === 'ubereats';
+      const name = isUE ? 'UberEats' : 'Postmates';
+      if (data.ok === true || data.ok === false) {
+        if (isUE) stats.ueLoggedIn = data.ok; else stats.loggedIn = data.ok;
+        renderSettings();
+        renderSetupChecklist();
+        renderLoginBanner();
+        showToast(data.ok ? `${name} session verified ✅` : `${name} session expired — log in again`, data.ok ? 'success' : 'error');
+      } else {
+        showToast(`${name} session check inconclusive${data.error ? ` (${data.error})` : ''} — will retry at the daily 4:45 AM check or the next apply run`, 'error');
+      }
       break;
     }
 
@@ -983,11 +1009,23 @@ function handleSSE(data) {
       showToast(`Error: ${data.message}`, 'error');
       setRunning('reddit', false);
       setRunning('apply', false);
+      // Reset EVERY login entry point — a failed setup can be for either
+      // platform (the error event doesn't say which), and a button left
+      // disabled at "⏳ Opening Chrome..." is dead until a page reload.
       {
         const setupBtn = document.getElementById('btn-setup');
         if (setupBtn) {
           setupBtn.disabled = false;
           setupBtn.textContent = stats.loggedIn === true ? '🔄 Re-login' : '🔐 Log in to Postmates';
+        }
+        const ueSetupBtn = document.getElementById('btn-setup-ue');
+        if (ueSetupBtn) {
+          ueSetupBtn.disabled = false;
+          ueSetupBtn.textContent = stats.ueLoggedIn === true ? '🔄 Re-login' : '🔐 Log in to UberEats';
+        }
+        for (const id of ['banner-login-btn', 'ue-banner-login-btn']) {
+          const b = document.getElementById(id);
+          if (b) { b.disabled = false; b.textContent = '🔐 Log in'; }
         }
       }
       break;
@@ -1156,13 +1194,21 @@ async function triggerSetup(target = 'postmates', btnEl = null) {
   // page button is the default.
   const btn = btnEl || document.getElementById(isUE ? 'btn-setup-ue' : 'btn-setup');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Opening Chrome...'; }
-  showToast(`Opening Chrome for ${name} login — log in then close the window`);
   try {
-    await fetch('/api/setup', {
+    const res = await fetch('/api/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target }),
     });
+    const j = await res.json().catch(() => ({ started: true }));
+    if (!j.started) {
+      // Browser held by an apply run / session probe — not an error, just "not
+      // now". Reset the button so the retry is one click.
+      showToast(j.message || 'Browser is busy — try again in a moment', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = `🔐 Log in to ${name}`; }
+      return;
+    }
+    showToast(`Opening Chrome for ${name} login — log in then close the window`);
   } catch {
     showToast('Failed to open setup', 'error');
     if (btn) { btn.disabled = false; btn.textContent = `🔐 Log in to ${name}`; }
@@ -1519,7 +1565,11 @@ function formatLogDetail(entry) {
   if (entry.applied !== undefined) parts.push(`${entry.applied} applied`);
   if (entry.code) parts.push(`code: ${entry.code}`);
   if (Array.isArray(entry.codes)) parts.push(entry.codes.join(', '));
+  if (entry.platform) parts.push(entry.platform === 'ubereats' ? 'UberEats' : 'Postmates');
   if (entry.result) parts.push(entry.result);
+  // Session checks / self-tests carry a boolean verdict + how far the probe got.
+  if (typeof entry.ok === 'boolean') parts.push(entry.ok ? 'ok ✓' : 'failed ✗');
+  if (entry.outcome) parts.push(entry.outcome);
   if (entry.reason) parts.push(REASON_LABELS[entry.reason] || `reason: ${entry.reason}`);
   if (entry.note) parts.push(entry.note);
   if (entry.error) parts.push(`ERROR: ${entry.error}`);

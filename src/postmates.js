@@ -109,7 +109,7 @@ async function closeBrowser() {
 // ── First-run setup: open headed browser so user can log in ─────────────────
 
 async function setupLogin({ target = 'postmates' } = {}) {
-  if (_applyRunning) throw new Error('Code applier is running; try login again when it finishes');
+  if (_applyRunning) throw new Error('Browser is busy (apply run or session check) — try login again in a moment');
   if (_setupRunning) throw new Error('Login setup is already running');
   _setupRunning = true;
   const isUE = target === 'ubereats';
@@ -322,40 +322,34 @@ async function looksLoggedOut(page) {
   } catch { return false; }
 }
 
-async function applyCode(page, code, platform = 'postmates') {
-  const plat = PLATFORMS[platform] || PLATFORMS.postmates;
-  // Navigate to promo modal URL.
-  // First load often redirects to mod=messagingInterstitial ("what's new" popup)
-  // instead of the promos modal, so we load, dismiss, then load again.
+// Scope to dialogs that contain an input so we never grab a cookie banner or
+// address confirmation modal that happens to appear at the same time.
+const MODAL_SELECTOR = '[role="dialog"]:has(input), [aria-modal="true"]:has(input)';
+
+// Shared preamble for anything that needs the code-entry modal: navigate to the
+// promo deep-link, clear interstitials, and retry through transient blips.
+// The modal is sometimes covered by the messagingInterstitial or a no-input
+// offer modal ("Enjoy 20% Off …"), and the deep-link *occasionally* comes back
+// as the logged-out landing page even when the session is valid — so we never
+// conclude "logged out" from a single read: on a logged-out-looking page we
+// warm the session via the home feed (which reliably re-establishes it) and
+// retry. Returns how far we got:
+//   'open'       — code-entry modal is visible (session definitely valid)
+//   'off_domain' — bounced off the platform entirely (not logged in)
+//   'logged_out' — persistently on the logged-out landing page (session dead)
+//   'blocked'    — on-domain and logged-in-looking, but the modal never opened
+async function openPromoModal(page, plat) {
   await page.goto(plat.promoUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
   await dismissPopups(page);
 
-  // Check if we got redirected away from the platform entirely (not logged in)
-  if (!plat.onDomain(page.url())) {
-    plat.setValid(false);
-    return { result: 'not_logged_in', detail: `Redirected — use Settings → Log in to ${plat.name}` };
-  }
+  if (!plat.onDomain(page.url())) return 'off_domain';
 
-  // Scope to dialogs that contain an input so we never grab a cookie banner or
-  // address confirmation modal that happens to appear at the same time.
-  const modalSelector = '[role="dialog"]:has(input), [aria-modal="true"]:has(input)';
-
-  // Up to 3 attempts to open the code-entry modal. It's sometimes covered by the
-  // messagingInterstitial or a no-input offer modal ("Enjoy 20% Off …"), and the
-  // promo deep-link *occasionally* comes back as the logged-out landing page even
-  // when the session is actually valid — a transient blip that clears on retry.
-  // So we never conclude "logged out" from a single read: on a logged-out-looking
-  // page we warm the session via the home feed (which reliably re-establishes it)
-  // and retry. Each pass: dismiss generic popups + any no-input dialog, then look
-  // for the modal. Reload between attempts since a fresh visit re-opens the panel.
   let modalOpen = false;
   let sawLoggedOut = false;
   for (let attempt = 0; attempt < 3 && !modalOpen; attempt++) {
     if (attempt > 0) {
       if (sawLoggedOut && plat.homeUrl) {
-        // Warm-up: loading the home feed reliably restores the logged-in
-        // session/location before we retry the promo deep-link.
         await page.goto(plat.homeUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
         await page.waitForTimeout(2000);
       }
@@ -364,28 +358,69 @@ async function applyCode(page, code, platform = 'postmates') {
     }
     await dismissPopups(page);
     await dismissNoInputModal(page);
-    modalOpen = await page.locator(modalSelector).first().isVisible({ timeout: 6000 }).catch(() => false);
+    modalOpen = await page.locator(MODAL_SELECTOR).first().isVisible({ timeout: 6000 }).catch(() => false);
     if (!modalOpen) sawLoggedOut = await looksLoggedOut(page);
   }
+  if (modalOpen) return 'open';
 
-  const modalLocator = page.locator(modalSelector).first();
-  if (!modalOpen) {
-    // Persistently couldn't open the modal — take a debug screenshot, then
-    // distinguish a genuinely dead session (still logged out after retries +
-    // warm-up) from a UI/modal problem while logged in.
-    try {
-      const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
-      fs.mkdirSync(debugDir, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      await page.screenshot({ path: path.join(debugDir, `no-modal-${ts}.png`), fullPage: false });
-    } catch {}
-    if (await looksLoggedOut(page)) {
-      plat.setValid(false);
-      return { result: 'not_logged_in', detail: `${plat.name} session expired — Settings → Log in to ${plat.name}` };
-    }
+  // Persistently couldn't open the modal — take a debug screenshot, then
+  // distinguish a genuinely dead session (still logged out after retries +
+  // warm-up) from a UI/modal problem while logged in.
+  try {
+    const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    await page.screenshot({ path: path.join(debugDir, `no-modal-${ts}.png`), fullPage: false });
+  } catch {}
+  return (await looksLoggedOut(page)) ? 'logged_out' : 'blocked';
+}
+
+// Session probe that types nothing and applies nothing — used to confirm a
+// login right after setup and by the daily check, so the dashboard's
+// "Unverified" state resolves without waiting for a real apply run (the
+// UberEats session may otherwise go days between fallback attempts).
+// Definitive outcomes update the session flag; 'blocked' is inconclusive
+// (probably logged in, but unproven) and deliberately leaves the flag alone.
+async function verifySession(platform = 'postmates') {
+  const plat = PLATFORMS[platform] || PLATFORMS.postmates;
+  if (_setupRunning) return { verified: null, error: 'Login setup is running' };
+  if (_applyRunning) return { verified: null, error: 'Apply run in progress' };
+  _applyRunning = true; // hold the browser exactly like an apply run would
+  let page = null;
+  try {
+    page = await getPage(false);
+    const outcome = await openPromoModal(page, plat);
+    const verified = outcome === 'open' ? true
+      : (outcome === 'off_domain' || outcome === 'logged_out') ? false
+      : null;
+    if (verified !== null) plat.setValid(verified);
+    state.appendLog({ type: 'session_verified', platform, ok: verified, outcome });
+    return { verified, outcome };
+  } catch (err) {
+    state.appendLog({ type: 'session_verified', platform, ok: null, error: err.message.slice(0, 100) });
+    return { verified: null, error: err.message };
+  } finally {
+    if (page) { try { await page.close(); } catch {} }
+    _applyRunning = false;
+  }
+}
+
+async function applyCode(page, code, platform = 'postmates') {
+  const plat = PLATFORMS[platform] || PLATFORMS.postmates;
+  const outcome = await openPromoModal(page, plat);
+  if (outcome === 'off_domain') {
+    plat.setValid(false);
+    return { result: 'not_logged_in', detail: `Redirected — use Settings → Log in to ${plat.name}` };
+  }
+  if (outcome === 'logged_out') {
+    plat.setValid(false);
+    return { result: 'not_logged_in', detail: `${plat.name} session expired — Settings → Log in to ${plat.name}` };
+  }
+  if (outcome === 'blocked') {
     return { result: 'error', detail: 'Promo modal did not open' };
   }
 
+  const modalLocator = page.locator(MODAL_SELECTOR).first();
   // Modal opened — the session is definitely valid.
   plat.setValid(true);
 
@@ -727,4 +762,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession };
