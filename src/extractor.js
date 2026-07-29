@@ -26,7 +26,10 @@ const FILTER_WORDS = new Set([
   'DELETED', 'STILL', 'NEED', 'HELP', 'THANKS', 'THANK', 'PLEASE', 'SORRY',
   'YEAH', 'NOPE', 'NONE', 'SURE', 'MINE', 'SAYS', 'SAID', 'TRIED', 'TRYING',
   'WORKS', 'WORKED', 'APPLY', 'CHECKOUT', 'ENTER', 'CLICK', 'ELIGIBLE',
-  'AVAILABLE', 'VALID', 'INVALID', 'EXPIRES',
+  'AVAILABLE', 'VALID', 'INVALID', 'EXPIRES', 'EXPIRATION',
+  // Words from pasted promo-detail blocks ("Location: United States",
+  // "Details", "$30 Minimum", "Pacific Daylight Time") — not codes.
+  'DETAILS', 'LOCATION', 'UNITED', 'STATES', 'PACIFIC', 'DAYLIGHT', 'MINIMUM',
 
   // Subreddit rules / moderator language
   'ADDRESSES', 'ANYTHING', 'BANNED', 'CRITICISM', 'DEROGATORY', 'FINAL',

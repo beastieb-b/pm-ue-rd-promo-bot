@@ -405,6 +405,54 @@ async function verifySession(platform = 'postmates') {
   }
 }
 
+// ── Reddit comment fetch via the browser ────────────────────────────────────
+// On 2026-07-20 Reddit started requiring a login for thread pages fetched by
+// plain HTTP clients (302 → /login?reason=lor2): old.reddit HTML, .json and
+// .rss all bounce to a login gate, while SEARCH pages still work anonymously —
+// so thread detection kept succeeding while comment fetches silently read
+// nothing. A real rendered browser still gets the new-Reddit page logged out,
+// so when curl comes back empty the scanner reads the thread through our own
+// Chrome instead. No Reddit account or cookie is needed for this.
+async function fetchRedditComments(threadId, subreddit) {
+  if (_setupRunning) return null; // never fight the login window for the browser
+  const page = await getPage(false);
+  try {
+    await page.goto(`https://www.reddit.com/r/${subreddit}/comments/${threadId}/?limit=500`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(4000);
+
+    // The new frontend lazy-loads comments — scroll until the count stabilizes.
+    let prev = -1;
+    for (let i = 0; i < 10; i++) {
+      const n = await page.locator('shreddit-comment').count().catch(() => 0);
+      if (n === prev) break;
+      prev = n;
+      await page.mouse.wheel(0, 4000).catch(() => {});
+      await page.waitForTimeout(1200);
+    }
+
+    const comments = await page.evaluate(() => {
+      return [...document.querySelectorAll('shreddit-comment')].map(el => {
+        // querySelector returns the element's OWN body: in document order it
+        // precedes any nested reply's slot, so replies don't duplicate parents.
+        const body = el.querySelector('[slot="comment"]');
+        return {
+          author: (el.getAttribute('author') || '').toLowerCase(),
+          distinguished: el.getAttribute('distinguished') || null,
+          text: (body ? body.innerText : '').trim(),
+          permalink: el.getAttribute('permalink'),
+        };
+      });
+    });
+
+    // Same exclusions as the old.reddit parser: AutoModerator + mod posts.
+    return comments
+      .filter(c => c.author !== 'automoderator' && !c.distinguished && c.text && c.text.length > 3)
+      .map(c => ({ text: c.text, permalink: c.permalink ? `https://www.reddit.com${c.permalink}` : null }));
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
+
 async function applyCode(page, code, platform = 'postmates') {
   const plat = PLATFORMS[platform] || PLATFORMS.postmates;
   const outcome = await openPromoModal(page, plat);
@@ -762,4 +810,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments };

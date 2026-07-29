@@ -249,6 +249,22 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
     return { error: `${label} comment fetch failed: ${err.message}` };
   }
 
+  // Reddit gates thread pages for plain HTTP clients (login redirect) while
+  // serving search pages normally — so curl reads an empty shell and the scan
+  // would "succeed" with 0 comments. Read the thread through our own Chrome
+  // instead (a rendered logged-out browser still gets the page).
+  if (comments.length === 0) {
+    try {
+      const viaBrowser = await require('./postmates').fetchRedditComments(newestEntry.id, subreddit);
+      if (viaBrowser && viaBrowser.length) {
+        state.appendLog({ type: 'reddit_fetch_browser', source: label, comments: viaBrowser.length });
+        comments = viaBrowser;
+      }
+    } catch (err) {
+      state.appendLog({ type: 'reddit_fetch_browser', source: label, error: err.message.slice(0, 120) });
+    }
+  }
+
   // NOTE: we intentionally do NOT fall back to the previous month's thread when
   // the newest thread is empty. Monthly codes expire when the month flips, so
   // backfilling last month's thread at rollover just re-queues a pile of expired
@@ -266,6 +282,28 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   }
   const triedState = getTriedState();
   const triedSet = new Set(triedState.tried_codes);
+
+  // Silent-failure watchdog: a thread that has already produced codes suddenly
+  // reading ZERO comments is Reddit blocking us, not an empty thread — say so
+  // loudly (source error + banner) instead of reporting a healthy no-op scan.
+  // (This exact mode went unnoticed for 9 days in July 2026.)
+  if (comments.length === 0 && triedSet.size > 0) {
+    const note = 'Thread returned no comments — Reddit is likely gating the fetch (both curl and browser paths failed)';
+    setSourceStatus(sourceKey, { status: 'error', note, usableCodes: 0, sourceUrl: `https://www.reddit.com/r/${subreddit}/comments/${newestEntry.id}/` });
+    state.appendLog({ type: 'reddit_empty_thread_anomaly', source: label, thread_id: newestEntry.id });
+    const existing = state.getHealthWarning();
+    if (!existing || existing.source === 'reddit_blocked') {
+      state.setHealthWarning(`r/${subreddit} comments are unreadable (Reddit is blocking both fetch paths) — new codes are being missed.`, 'reddit_blocked');
+    }
+    onProgress?.({ source: label, step: 'error', message: note });
+    return { threadId: newestEntry.id, commentsScanned: 0, codesFound: 0, newCodes: 0, queued: 0 };
+  }
+  // Comments flowing again — retire our own blocked banner if it's up.
+  if (comments.length > 0) {
+    const existing = state.getHealthWarning();
+    if (existing && existing.source === 'reddit_blocked') state.clearHealthWarning();
+  }
+
   const candidates = [...allCodes].filter(c => !triedSet.has(c)).sort();
 
   // Skip codes already sitting on the account (applied within the last
