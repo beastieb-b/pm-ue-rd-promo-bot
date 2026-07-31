@@ -795,6 +795,7 @@ function eventLabel(type) {
     session_verified: 'Session check',
     reddit_fetch_browser: 'Comments via browser (Reddit gate)',
     reddit_empty_thread_anomaly: 'Thread unreadable — Reddit blocking',
+    modal_reopen: 'Modal closed mid-entry — reopened',
     applied_skip: 'Skipped — already on account',
     ubereats_fallback_retry: 'UberEats retry (transient error)',
     rate_limited: 'Rate limited',

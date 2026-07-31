@@ -484,53 +484,69 @@ async function applyCode(page, code, platform = 'postmates') {
     'input[aria-label*="code" i]',
   ];
 
+  // Locate the input and type the code, verifying it landed. The site
+  // occasionally re-renders and detaches the modal mid-entry (the recurring
+  // "locator.inputValue: Timeout 30000ms" flake — 9 hits in July 2026, once
+  // six runs in a row on one code). Interacting with a detached locator used
+  // to hang for the 30s default timeout and crash the whole attempt, costing a
+  // 2h defer; instead, use short explicit timeouts and, if the modal vanished,
+  // reopen it and retype once — the second pass almost always sticks.
   let inputLocator = null;
-
-  // Try modal-scoped selectors first
-  for (const sel of inputSelectors) {
-    try {
-      const loc = modalLocator.locator(sel).first();
-      if (await loc.isVisible({ timeout: 3000 })) {
-        inputLocator = loc;
-        break;
+  for (let entryAttempt = 0; entryAttempt < 2 && !inputLocator; entryAttempt++) {
+    if (entryAttempt > 0) {
+      const reopened = await openPromoModal(page, plat);
+      if (reopened !== 'open') {
+        return { result: 'error', detail: 'Promo modal closed mid-entry and did not reopen' };
       }
-    } catch {}
-  }
-
-  // Fallback: any input inside the modal (excludes the global search bar)
-  if (!inputLocator) {
+    }
     try {
-      const loc = modalLocator.locator('input').first();
-      if (await loc.isVisible({ timeout: 3000 })) {
-        inputLocator = loc;
+      // Modal-scoped selectors first, then any input inside the modal.
+      let loc = null;
+      for (const sel of inputSelectors) {
+        const cand = modalLocator.locator(sel).first();
+        if (await cand.isVisible({ timeout: 3000 }).catch(() => false)) { loc = cand; break; }
       }
-    } catch {}
-  }
+      if (!loc) {
+        const cand = modalLocator.locator('input').first();
+        if (await cand.isVisible({ timeout: 3000 }).catch(() => false)) loc = cand;
+      }
+      if (!loc) {
+        if (entryAttempt > 0) return { result: 'error', detail: 'Could not find promo input inside modal' };
+        continue; // modal may have detached — reopen and retry
+      }
 
+      // Clear and type the code
+      await loc.click({ clickCount: 3, timeout: 5000 });
+      await loc.fill('', { timeout: 5000 });
+      await page.keyboard.type(code, { delay: 80 });
+      await page.waitForTimeout(500);
+
+      // Verify text appeared in input
+      let val = await loc.inputValue({ timeout: 5000 });
+      if (!val.trim()) {
+        // Retry once with a slower type
+        await loc.fill('', { timeout: 5000 });
+        for (const char of code) {
+          await page.keyboard.type(char);
+          await page.waitForTimeout(50);
+        }
+        await page.waitForTimeout(500);
+        val = await loc.inputValue({ timeout: 5000 });
+        if (!val.trim()) {
+          return { result: 'error', detail: 'Text did not appear in input field' };
+        }
+      }
+      inputLocator = loc; // typed and verified
+    } catch (err) {
+      // Locator interactions threw (detached modal / re-render). One reopen.
+      if (entryAttempt > 0) {
+        return { result: 'error', detail: 'Promo modal closed mid-entry (site re-render)' };
+      }
+      state.appendLog({ type: 'modal_reopen', code, platform, error: err.message.slice(0, 80) });
+    }
+  }
   if (!inputLocator) {
     return { result: 'error', detail: 'Could not find promo input inside modal' };
-  }
-
-  // Clear and type the code
-  await inputLocator.click({ clickCount: 3 });
-  await inputLocator.fill('');
-  await page.keyboard.type(code, { delay: 80 });
-  await page.waitForTimeout(500);
-
-  // Verify text appeared in input
-  const inputVal = await inputLocator.inputValue();
-  if (!inputVal.trim()) {
-    // Retry once with a slower type
-    await inputLocator.fill('');
-    for (const char of code) {
-      await page.keyboard.type(char);
-      await page.waitForTimeout(50);
-    }
-    await page.waitForTimeout(500);
-    const inputVal2 = await inputLocator.inputValue();
-    if (!inputVal2.trim()) {
-      return { result: 'error', detail: 'Text did not appear in input field' };
-    }
   }
 
   // Snapshot the modal text BEFORE applying. The promo modal always shows the
@@ -803,6 +819,9 @@ async function testDetection() {
     };
   } catch (err) {
     state.appendLog({ type: 'self_test', code: fakeCode, result: 'crash', ok: false, error: err.message });
+    // A crash is as loud as a wrong verdict — without this, a crashed daily
+    // self-test only reached the console log and the banner stayed silent.
+    state.setHealthWarning(`Self-test crashed (${err.message.slice(0, 80)}) — run it again from Settings → System Health; if it keeps failing the Postmates UI may have changed.`, 'self_test');
     return { ok: false, error: err.message };
   } finally {
     if (page) { try { await page.close(); } catch {} }
