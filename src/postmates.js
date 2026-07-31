@@ -420,14 +420,24 @@ async function fetchRedditComments(threadId, subreddit) {
     await page.goto(`https://www.reddit.com/r/${subreddit}/comments/${threadId}/?limit=500`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(4000);
 
-    // The new frontend lazy-loads comments — scroll until the count stabilizes.
+    // The new frontend lazy-loads comments in batches behind "View more
+    // comments" buttons — scrolling alone tops out around 25 comments on long
+    // threads (a thread measured 92 when clicked through). Click load-more
+    // when present, otherwise scroll, until the count stabilizes twice.
     let prev = -1;
-    for (let i = 0; i < 10; i++) {
+    let stable = 0;
+    for (let i = 0; i < 15 && stable < 2; i++) {
+      const more = page.getByRole('button', { name: /view more comments|more replies|load more/i }).first();
+      if (await more.isVisible({ timeout: 500 }).catch(() => false)) {
+        await more.click().catch(() => {});
+        await page.waitForTimeout(1500);
+      } else {
+        await page.mouse.wheel(0, 6000).catch(() => {});
+        await page.waitForTimeout(1000);
+      }
       const n = await page.locator('shreddit-comment').count().catch(() => 0);
-      if (n === prev) break;
+      stable = n === prev ? stable + 1 : 0;
       prev = n;
-      await page.mouse.wheel(0, 4000).catch(() => {});
-      await page.waitForTimeout(1200);
     }
 
     const comments = await page.evaluate(() => {
