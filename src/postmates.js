@@ -405,6 +405,28 @@ async function verifySession(platform = 'postmates') {
   }
 }
 
+// Reddit's logged-out gate expanded to search/listing pages (Aug 2026): curl
+// now gets 200-status shells with no post links, so thread DETECTION went
+// blind the same way comment fetching did in July. Same cure: read the
+// subreddit front page through our own Chrome (logged out — no Reddit account
+// needed) and let the caller pick out the monthly-thread posts.
+async function fetchSubredditPosts(subreddit) {
+  if (_setupRunning) return [];
+  const page = await getPage(false);
+  try {
+    await page.goto(`https://www.reddit.com/r/${subreddit}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(4000);
+    return await page.evaluate(() =>
+      [...document.querySelectorAll('shreddit-post')].map(p => ({
+        title: p.getAttribute('post-title') || '',
+        permalink: p.getAttribute('permalink') || '',
+      }))
+    );
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
+
 // ── Reddit comment fetch via the browser ────────────────────────────────────
 // On 2026-07-20 Reddit started requiring a login for thread pages fetched by
 // plain HTTP clients (302 → /login?reason=lor2): old.reddit HTML, .json and
@@ -839,4 +861,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts };

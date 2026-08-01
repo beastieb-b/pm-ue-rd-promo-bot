@@ -167,6 +167,34 @@ async function detectThread(subreddit) {
   const listing = await detectFromListing(subreddit);
   if (listing.length) return listing.slice(0, 2);
 
+  // Both curl paths blind (Reddit's logged-out gate now covers search and
+  // listing pages too, serving 200-status shells with no links) — read the
+  // subreddit front page through our own Chrome, where the monthly thread is
+  // stickied at the top. Sort by post id (base36, increases over time) so
+  // entries[0] is the newest monthly thread regardless of page order.
+  try {
+    const posts = await require('./postmates').fetchSubredditPosts(subreddit);
+    const linkRe = new RegExp(`^/r/${subreddit}/comments/([a-z0-9]+)/([^/]+)`, 'i');
+    const seen = new Set();
+    const entries = [];
+    for (const p of posts) {
+      const m = (p.permalink || '').match(linkRe);
+      if (!m) continue;
+      const [, id, slug] = m;
+      if (seen.has(id) || !isMonthlyPromoSlug(slug)) continue;
+      seen.add(id);
+      entries.push({ id, title: p.title || 'Monthly Existing User Promo Code Thread', published: 0 });
+    }
+    entries.sort((a, b) => parseInt(b.id, 36) - parseInt(a.id, 36));
+    entries.forEach((e, i) => { e.published = Date.now() - i * 1000; });
+    if (entries.length) {
+      state.appendLog({ type: 'thread_detect_browser', subreddit, found: entries.length, newest: entries[0].id });
+      return entries.slice(0, 2);
+    }
+  } catch (err) {
+    state.appendLog({ type: 'thread_detect_browser', subreddit, error: err.message.slice(0, 100) });
+  }
+
   throw new Error(lastErr);
 }
 
