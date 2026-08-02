@@ -583,6 +583,14 @@ function getStats() {
     ueThreadId: getUEThreadId(),
     ueThreadMonth: getUEThreadMonth(),
     threadFreshness: getThreadFreshness(),
+    // Codes inside the 14-day re-apply skip window — shown on the Queue page so
+    // "why isn't X queued?" has a visible answer instead of one log line.
+    recentlyAppliedList: Object.entries(loadAppliedLedger())
+      .map(([code, ts]) => ({ code, appliedAt: ts, ms: new Date(ts).getTime() }))
+      .filter(e => !isNaN(e.ms) && e.ms >= Date.now() - REAPPLY_SKIP_DAYS * 86400000)
+      .sort((a, b) => b.ms - a.ms)
+      .map(({ code, appliedAt }) => ({ code, appliedAt })),
+    reapplySkipDays: REAPPLY_SKIP_DAYS,
     queueCount: queue.length,
     totalTried: processed.length,
     successCount: freshSuccesses.length,

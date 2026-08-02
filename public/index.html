@@ -232,6 +232,21 @@
             <div class="empty-state">Queue is empty — run a source scan to find codes</div>
           </div>
         </div>
+
+        <div class="card" id="already-applied-card" style="display:none">
+          <div class="card-header">
+            <h3>Already on Your Account</h3>
+            <span class="card-badge" id="already-applied-count">0</span>
+          </div>
+          <div class="region-locked-note" id="already-applied-note">
+            These codes appear in the threads but were applied to your account within
+            the last 14 days — the scanner <strong>skips re-queueing them</strong>
+            (re-trying just returns "you already applied this promotion"). They
+            become eligible again after 14 days. Adding a code manually always
+            overrides the skip.
+          </div>
+          <div class="region-list" id="already-applied-list"></div>
+        </div>
       </section>
 
       <!-- Results Section -->

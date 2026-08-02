@@ -186,6 +186,7 @@ function renderOverview() {
 
   renderThreadFreshness(stats.threadFreshness);
   renderSavingsGraph(stats.monthlySavings);
+  renderAlreadyApplied(stats.recentlyAppliedList);
 
   const successEl = document.getElementById('success-list');
   const count = document.getElementById('success-count');
@@ -1448,6 +1449,26 @@ function threadBadgeIcon(freshness) {
   if (states.includes('waiting')) return '⏳';
   if (states.length && states.every(s => s === 'found')) return '✓';
   return '';
+}
+
+// "Already on Your Account" card (Queue page) — codes inside the 14-day
+// re-apply skip window. Answers "why isn't this thread code queued?" where the
+// user actually looks, instead of a single Activity Log line.
+function renderAlreadyApplied(items) {
+  const card = document.getElementById('already-applied-card');
+  const list = document.getElementById('already-applied-list');
+  const count = document.getElementById('already-applied-count');
+  if (!card || !list) return;
+  if (!items || !items.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  if (count) count.textContent = items.length;
+  list.innerHTML = items.map(item => {
+    const when = item.appliedAt ? timeAgo(new Date(item.appliedAt)) : '';
+    return `<button class="region-chip" title="Applied ${escapeHtml(item.appliedAt || '')} — click to copy" onclick="copyCode('${escapeHtml(item.code)}')">
+      <span class="region-chip-code">${escapeHtml(item.code)}</span>
+      <span class="region-chip-loc">✓ applied ${escapeHtml(when)}</span>
+    </button>`;
+  }).join('');
 }
 
 // "Savings by Month" card — a simple column chart of fixed-dollar savings per
