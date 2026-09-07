@@ -394,6 +394,15 @@ async function verifySession(platform = 'postmates') {
       : (outcome === 'off_domain' || outcome === 'logged_out') ? false
       : null;
     if (verified !== null) plat.setValid(verified);
+    if (verified === true) {
+      // A confirmed-working session retires a self-test banner that was raised
+      // by a not_logged_in verdict — that failure is resolved now; don't leave
+      // the scary "UI may have changed" banner up until the next 4:45am test.
+      const hw = state.getHealthWarning();
+      if (hw && hw.source === 'self_test' && /not_logged_in/.test(hw.message || '')) {
+        state.clearHealthWarning();
+      }
+    }
     state.appendLog({ type: 'session_verified', platform, ok: verified, outcome });
     return { verified, outcome };
   } catch (err) {
