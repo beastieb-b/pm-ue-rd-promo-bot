@@ -383,8 +383,17 @@ async function openPromoModal(page, plat) {
 // (probably logged in, but unproven) and deliberately leaves the flag alone.
 async function verifySession(platform = 'postmates') {
   const plat = PLATFORMS[platform] || PLATFORMS.postmates;
-  if (_setupRunning) return { verified: null, error: 'Login setup is running' };
-  if (_applyRunning) return { verified: null, error: 'Apply run in progress' };
+  // Busy early-outs must still leave a trace — a silently skipped post-login
+  // verify once left the dashboard on "Unverified" + a stale banner with no
+  // clue anywhere about why the promised verification never happened.
+  if (_setupRunning) {
+    state.appendLog({ type: 'session_verified', platform, ok: null, error: 'skipped — login setup is running' });
+    return { verified: null, error: 'Login setup is running' };
+  }
+  if (_applyRunning) {
+    state.appendLog({ type: 'session_verified', platform, ok: null, error: 'skipped — apply run in progress' });
+    return { verified: null, error: 'Apply run in progress' };
+  }
   _applyRunning = true; // hold the browser exactly like an apply run would
   let page = null;
   try {
@@ -847,6 +856,13 @@ async function testDetection() {
       // a passing self-test says nothing about a stale monthly thread.
       const existing = state.getHealthWarning();
       if (!existing || existing.source !== 'thread_stale') state.clearHealthWarning();
+    } else if (verdict.result === 'not_logged_in') {
+      // Not a UI problem — the session is logged out. applyCode already set
+      // the session flag false, so the 🔑 login banner carries the actionable
+      // message; a second banner blaming the UI just confuses ("something
+      // looks wrong" — it did). Retire any earlier self-test banner instead.
+      const existing = state.getHealthWarning();
+      if (existing && existing.source === 'self_test') state.clearHealthWarning();
     } else {
       state.setHealthWarning(`Self-test failed: expected "rejected" but got "${verdict.result}". The Postmates UI may have changed.`, 'self_test');
     }
