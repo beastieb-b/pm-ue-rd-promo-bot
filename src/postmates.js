@@ -445,6 +445,66 @@ async function fetchSubredditPosts(subreddit) {
   }
 }
 
+// ── USCardForum (Discourse) fetch via the browser ───────────────────────────
+// The "UberEATs/Postmates Coupon Codes" topic is Cloudflare-gated for plain
+// HTTP clients (403), but the forum's own JSON API answers normally from inside
+// a page on its origin. Load the topic once to establish that origin, read the
+// topic's post stream (every post id, in order), then fetch the content of the
+// newest posts past our high-water mark via /t/{id}/posts.json.
+async function fetchUSCFPosts({ topicId, baseUrl, lastSeenId = 0, maxPosts = 30 }) {
+  if (_setupRunning) return null; // never fight the login window for the browser
+  const page = await getPage(false);
+  try {
+    await page.goto(`${baseUrl}/t/topic/${topicId}`, { waitUntil: 'domcontentloaded', timeout: 40000 });
+    await page.waitForTimeout(3000);
+    return await page.evaluate(async ({ topicId, lastSeenId, maxPosts }) => {
+      const get = async (url) => {
+        const r = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+        return r.json();
+      };
+      const topic = await get(`/t/${topicId}.json`);
+      const stream = (topic.post_stream && topic.post_stream.stream) || [];
+      let maxStreamId = 0;
+      for (const id of stream) if (id > maxStreamId) maxStreamId = id;
+
+      // Post ids increase over time, so "newer than the high-water mark".
+      const ids = stream.filter(id => id > lastSeenId).slice(-maxPosts);
+      const raw = [];
+      for (let i = 0; i < ids.length; i += 20) {
+        const qs = ids.slice(i, i + 20).map(id => `post_ids[]=${id}`).join('&');
+        const d = await get(`/t/${topicId}/posts.json?${qs}`);
+        raw.push(...((d.post_stream && d.post_stream.posts) || []));
+      }
+
+      // Cooked HTML → text that keeps line boundaries (so "CODE1</p><p>CODE2"
+      // can't fuse into one token), minus quoted earlier posts.
+      const toText = (html) => {
+        const el = document.createElement('div');
+        el.innerHTML = html || '';
+        el.querySelectorAll('aside.quote').forEach(q => q.remove());
+        el.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+        el.querySelectorAll('p, div, li, pre, tr, h1, h2, h3, h4, h5, h6').forEach(b => b.append('\n'));
+        return (el.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+      };
+
+      return {
+        streamLength: stream.length,
+        maxStreamId,
+        posts: raw.map(p => ({
+          id: p.id,
+          postNumber: p.post_number,
+          createdAt: p.created_at,
+          deleted: !!(p.deleted_at || p.user_deleted || p.hidden || p.cooked_hidden),
+          text: toText(p.cooked),
+        })),
+      };
+    }, { topicId, lastSeenId, maxPosts });
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
+
 // ── Reddit comment fetch via the browser ────────────────────────────────────
 // On 2026-07-20 Reddit started requiring a login for thread pages fetched by
 // plain HTTP clients (302 → /login?reason=lor2): old.reddit HTML, .json and
@@ -886,4 +946,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts, fetchUSCFPosts };

@@ -4,7 +4,8 @@ Automatically finds **existing-user** promo codes for Postmates, applies them to
 your account, and tracks how much you've actually saved — all from a local web
 dashboard.
 
-It monitors the monthly promo-code threads, extracts the codes, and applies each one
+It monitors the monthly promo-code threads on Reddit plus the long-running
+[USCardForum coupon topic](https://www.uscardforum.com/t/topic/15780), extracts the codes, and applies each one
 through a real logged-in Chrome session. Codes that Postmates reports as locked
 to another city (e.g. "Las Vegas") are detected and **excluded from your savings
 total** so the number stays honest.
@@ -32,6 +33,13 @@ total** so the number stays honest.
    indexing, so a freshly-posted thread is caught right at month rollover). If a
    source is still on last month's thread a few days into the new month, the
    dashboard raises a banner so a missed rollover never goes unnoticed.
+   **USCardForum** is scanned on the same cadence: one continuous Discourse
+   topic (since 2020, English/Chinese) that regularly carries codes the Reddit
+   threads never get. It's Cloudflare-gated for plain HTTP, so the app reads it
+   through its own Chrome via the forum's JSON API, keeping a high-water mark
+   (`uscf_state.json`) so each scan reads only posts it hasn't seen (posts older
+   than 14 days are ignored). Forum failures show on its source card without
+   failing the scan; its new codes trigger apply-on-arrival like any other.
 2. **Extract** — pulls promo-code-shaped tokens out of the comments, filtering
    common false positives (English words, city names, time strings, etc.).
 3. **Apply** — opens the Postmates promo modal in a real headed Chrome profile
@@ -178,6 +186,7 @@ All state lives in `data/` (gitignored). Full-file writes are **atomic**
 | `code_catalog.json` | Per-code metadata (source, region, comment link, confidence) + source health. |
 | `tried_codes.json` / `ue_tried_codes.json` | Codes already seen per subreddit (so they aren't re-queued). |
 | `applied_codes.json` | Codes that landed on the account (success/region-locked) with when — codes applied in the last 14 days aren't re-queued. |
+| `uscf_state.json` | USCardForum high-water mark — the newest forum post id already scanned. |
 | `thread_config.txt` / `ue_thread_config.txt` | The current monthly thread IDs. |
 | `settings.json` | Intervals + home region. |
 | `heartbeat.json` | Last successful scan/apply (for the staleness watchdog). |

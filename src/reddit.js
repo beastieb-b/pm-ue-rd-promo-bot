@@ -1,4 +1,5 @@
 const { execFile } = require('child_process');
+const cfg = require('./config');
 const state = require('./state');
 const { extractCodes, extractCodesWithContext } = require('./extractor');
 const { detectRegionRestriction } = require('./region');
@@ -6,6 +7,7 @@ const { detectRegionRestriction } = require('./region');
 const SOURCE_LABELS = {
   reddit_postmates: 'Reddit · Postmates',
   reddit_ubereats: 'Reddit · UberEATS',
+  uscf: 'USCardForum',
 };
 
 function getCheerio() {
@@ -395,6 +397,110 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   return { threadId: newestEntry.id, commentsScanned: comments.length, codesFound: allCodes.size, newCodes: newCodes.length, queued: added };
 }
 
+// ── USCardForum ──────────────────────────────────────────────────────────────
+// "UberEATs/Postmates Coupon Codes" — one long-running Discourse topic (since
+// 2020, mixed English/Chinese, new codes most days). It regularly carries codes
+// that never reach the Reddit threads. No monthly rollover: a high-water mark
+// (newest post id scanned) means each scan reads only posts it hasn't seen.
+
+const USCF_MAX_AGE_DAYS = 14; // codes in older posts are almost always dead
+
+// Pure: which fetched posts are worth scanning — newer than the high-water
+// mark, not deleted/hidden, and recent enough that the code may still work.
+function selectUSCFPosts(posts, lastSeenId = 0, now = Date.now(), maxAgeDays = USCF_MAX_AGE_DAYS) {
+  const cutoff = now - maxAgeDays * 86400000;
+  return (posts || [])
+    .filter(p => p && p.id > lastSeenId && !p.deleted && p.text)
+    .filter(p => { const t = new Date(p.createdAt).getTime(); return !isNaN(t) && t >= cutoff; })
+    .sort((a, b) => a.postNumber - b.postNumber);
+}
+
+async function scanUSCF({ onProgress } = {}) {
+  const sourceKey = 'uscf';
+  const label = SOURCE_LABELS.uscf;
+  const topicUrl = `${cfg.USCF_BASE_URL}/t/topic/${cfg.USCF_TOPIC_ID}`;
+  onProgress?.({ source: label, step: 'fetching', threadId: `topic ${cfg.USCF_TOPIC_ID}` });
+  setSourceStatus(sourceKey, { status: 'checking', note: 'Reading the newest forum posts', sourceUrl: topicUrl });
+
+  const st = state.getUSCFState();
+  const lastSeenId = st.lastSeenId || 0;
+  const fail = (note) => {
+    setSourceStatus(sourceKey, { status: 'error', note, usableCodes: 0, sourceUrl: topicUrl });
+    state.appendLog({ type: 'forum_check_error', source: label, error: note });
+    onProgress?.({ source: label, step: 'error', message: note });
+    return { error: note };
+  };
+
+  let res;
+  try {
+    res = await require('./postmates').fetchUSCFPosts({
+      topicId: cfg.USCF_TOPIC_ID, baseUrl: cfg.USCF_BASE_URL, lastSeenId, maxPosts: cfg.USCF_POSTS_PER_SCAN,
+    });
+  } catch (err) {
+    return fail(`Forum fetch failed: ${err.message.slice(0, 100)}`);
+  }
+  if (!res) {
+    // Browser held by a login window — the high-water mark is untouched, so
+    // nothing is lost; the next scan picks these posts up.
+    setSourceStatus(sourceKey, { status: 'ok', note: 'Skipped this scan — browser busy with a login', sourceUrl: topicUrl });
+    return { skipped: true, commentsScanned: 0, codesFound: 0, newCodes: 0, queued: 0 };
+  }
+  // A 5,000+ post topic answering with nothing means we're being blocked —
+  // say so loudly rather than report a healthy scan of zero posts.
+  if (!res.streamLength) return fail('Forum topic returned no posts — the forum may be blocking the browser');
+
+  const posts = selectUSCFPosts(res.posts, lastSeenId);
+  const comments = posts.map(p => ({ text: p.text, permalink: `${topicUrl}/${p.postNumber}` }));
+  const codeContext = extractCodesWithContext(comments);
+  const found = [...codeContext.keys()];
+
+  // Same skips as Reddit: codes already on the account (14-day ledger), plus
+  // anything already queued or tried this cycle — the forum often reposts
+  // codes the Reddit threads carried first, and those keep their attribution.
+  const recentlyApplied = state.getRecentlyApplied();
+  const skippedApplied = found.filter(c => recentlyApplied.has(c));
+  if (skippedApplied.length) {
+    state.appendLog({ type: 'applied_skip', source: label, codes: skippedApplied, note: `already on the account (applied < ${state.REAPPLY_SKIP_DAYS}d ago)` });
+  }
+  const known = new Set([...state.getQueue(), ...state.getProcessed().map(r => r.code)]);
+  const candidates = found.filter(c => !recentlyApplied.has(c) && !known.has(c)).sort();
+
+  const nowIso = new Date().toISOString();
+  const entries = candidates.map(code => {
+    const ctx = codeContext.get(code) || {};
+    const region = detectRegionRestriction(ctx.context);
+    return buildCodeEntry(code, {
+      sourceKey,
+      sourceUrl: topicUrl,
+      commentUrl: ctx.commentUrl || null, // deep link to the exact forum post
+      sourceTitle: 'UberEATs/Postmates Coupon Codes',
+      statusHint: 'Forum post',
+      statusNote: `${posts.length} new post${posts.length === 1 ? '' : 's'} scanned on USCardForum`,
+      lastSeenAt: nowIso,
+      existingUser: true,
+      region: region ? region.region : null,
+      regionRestricted: region ? region.restricted : false,
+      regionNote: region ? region.note : null,
+    });
+  });
+  const added = entries.length ? state.addToQueue(entries) : 0;
+
+  // Advance to the newest post in the topic — including old/deleted/codeless
+  // ones — so no post is ever scanned twice.
+  state.saveUSCFState({ lastSeenId: Math.max(lastSeenId, res.maxStreamId || 0), lastScanAt: nowIso });
+
+  setSourceStatus(sourceKey, {
+    status: 'ok',
+    note: posts.length ? `${posts.length} new post${posts.length === 1 ? '' : 's'} scanned` : 'No new posts since last scan',
+    usableCodes: candidates.length,
+    queued: added,
+    sourceUrl: topicUrl,
+  });
+  state.appendLog({ type: 'forum_check_done', source: label, posts_scanned: posts.length, codes_found: found.length, new_codes: candidates.length, queued: added });
+  onProgress?.({ source: label, step: 'done', commentsScanned: posts.length, newCodes: candidates.length, queued: added });
+  return { threadId: `topic ${cfg.USCF_TOPIC_ID}`, commentsScanned: posts.length, codesFound: found.length, newCodes: candidates.length, queued: added };
+}
+
 // Monthly threads are usually posted on the 1st, but a 1–2 day delay is normal,
 // so we don't warn until a few days in (state.STALE_THREAD_GRACE_DAYS). Past
 // that, if we're still pointed at a previous month's thread, the new thread
@@ -466,7 +572,18 @@ async function runRedditCheck({ onProgress } = {}) {
 
   checkThreadStaleness();
 
-  const scans = [pm, ue];
+  // USCardForum is supplementary: a failure shows as an error on its own
+  // source card but doesn't fail the scan (Reddit is the primary signal and
+  // drives the scan heartbeat). Its new codes DO count toward `queued`, so
+  // they trigger apply-on-arrival like any other fresh code.
+  let us;
+  try {
+    us = await scanUSCF({ onProgress });
+  } catch (err) {
+    us = { error: err.message };
+  }
+
+  const scans = [pm, ue, us];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);
   const totalQueued = scans.reduce((sum, entry) => sum + (entry.queued || 0), 0);
   const coreErrors = [pm.error, ue.error].filter(Boolean);
@@ -474,17 +591,20 @@ async function runRedditCheck({ onProgress } = {}) {
   return {
     threadId: pm.threadId,
     ueThreadId: ue.threadId,
-    commentsScanned: (pm.commentsScanned || 0) + (ue.commentsScanned || 0),
+    commentsScanned: (pm.commentsScanned || 0) + (ue.commentsScanned || 0) + (us.commentsScanned || 0),
     newCodes: totalNew,
     queued: totalQueued,
     postmates: pm,
     ubereats: ue,
+    uscf: us,
     error: coreErrors.length > 0 ? coreErrors.join('; ') : null,
   };
 }
 
 module.exports = {
   runRedditCheck,
+  scanUSCF,
+  selectUSCFPosts,
   detectCurrentThread,
   detectUberEatsThread,
   detectFromListing,

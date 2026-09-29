@@ -798,6 +798,8 @@ function eventLabel(type) {
     reddit_empty_thread_anomaly: 'Thread unreadable — Reddit blocking',
     modal_reopen: 'Modal closed mid-entry — reopened',
     thread_detect_browser: 'Thread found via browser (Reddit gate)',
+    forum_check_done: 'Scan done (forum)',
+    forum_check_error: 'Forum scan error',
     applied_skip: 'Skipped — already on account',
     ubereats_fallback_retry: 'UberEats retry (transient error)',
     rate_limited: 'Rate limited',
@@ -1585,6 +1587,7 @@ function formatLogDetail(entry) {
   if (entry.source) parts.push(`source: ${entry.source}`);
   if (entry.thread_id) parts.push(`thread: ${entry.thread_id}`);
   if (entry.comments_scanned) parts.push(`${entry.comments_scanned} comments`);
+  if (entry.posts_scanned !== undefined) parts.push(`${entry.posts_scanned} new posts`);
   if (entry.new_codes !== undefined) parts.push(`${entry.new_codes} new codes`);
   if (entry.queued !== undefined) parts.push(`${entry.queued} queued`);
   if (entry.applied !== undefined) parts.push(`${entry.applied} applied`);

@@ -30,6 +30,14 @@ module.exports = {
   UE_THREAD_DETECTED_FILE: path.join(DATA_DIR, 'ue_last_thread_detected.txt'),
   UE_TRIED_FILE: path.join(DATA_DIR, 'ue_tried_codes.json'),
 
+  // USCardForum "UberEATs/Postmates Coupon Codes" — a single long-running
+  // Discourse topic (active since 2020, new codes most days). Its JSON API is
+  // Cloudflare-gated for plain HTTP clients but works from inside our browser.
+  USCF_TOPIC_ID: 15780,
+  USCF_BASE_URL: 'https://www.uscardforum.com',
+  USCF_STATE_FILE: path.join(DATA_DIR, 'uscf_state.json'),
+  USCF_POSTS_PER_SCAN: 30,
+
   // Postmates automation
   MAX_CODES_PER_RUN: 5,
   CODE_WAIT_MS: 2 * 60 * 1000,         // 2 minutes between codes

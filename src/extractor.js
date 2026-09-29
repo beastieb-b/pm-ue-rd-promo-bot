@@ -27,6 +27,8 @@ const FILTER_WORDS = new Set([
   'YEAH', 'NOPE', 'NONE', 'SURE', 'MINE', 'SAYS', 'SAID', 'TRIED', 'TRYING',
   'WORKS', 'WORKED', 'APPLY', 'CHECKOUT', 'ENTER', 'CLICK', 'ELIGIBLE',
   'AVAILABLE', 'VALID', 'INVALID', 'EXPIRES', 'EXPIRATION',
+  // Platform names ("Uber eats $10 off $20" matched the "WORD $X off" rule).
+  'EATS', 'POSTMATE',
   // Words from pasted promo-detail blocks ("Location: United States",
   // "Details", "$30 Minimum", "Pacific Daylight Time") — not codes.
   'DETAILS', 'LOCATION', 'UNITED', 'STATES', 'PACIFIC', 'DAYLIGHT', 'MINIMUM',
@@ -186,9 +188,14 @@ function extractCodes(commentTexts) {
       if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
     }
 
-    // Pattern 5: Standalone capitalized word on its own line in a promo-context comment
+    // Pattern 5: Standalone capitalized word on its own line in a promo-context comment.
+    // "Standalone" means the word ENDS its line or is followed by a separator
+    // (dash, pipe, paren, $) — not merely that it STARTS a line, which made
+    // prose like "Grocery codes USA?" or "Doctor Of Credit" into codes. The
+    // lookahead also stops the match from consuming the newline, which used
+    // to skip every other line in a list of codes.
     if (/\$|off|promo|code|discount|coupon|deal/i.test(cleaned)) {
-      const standalone = cleaned.matchAll(/(?:^|\n)\s*([A-Z][a-z]{3,})\s/g);
+      const standalone = cleaned.matchAll(/(?:^|\n)[ \t]*([A-Z][a-z]{3,})(?=[ \t]*(?:$|\n|[-–—|(]|\$))/g);
       for (const m of standalone) {
         if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
       }

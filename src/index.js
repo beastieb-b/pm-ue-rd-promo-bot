@@ -122,6 +122,8 @@ async function runReddit() {
       const pm = result.postmates, ue = result.ubereats;
       console.log(`  r/postmates: ${pm?.threadId || '?'} | ${pm?.commentsScanned ?? 0} comments | ${pm?.newCodes ?? 0} new`);
       console.log(`  r/UberEATS:  ${ue?.threadId || '?'} | ${ue?.commentsScanned ?? 0} comments | ${ue?.newCodes ?? 0} new`);
+      const us = result.uscf;
+      if (us) console.log(`  USCardForum: ${us.error ? 'ERROR — ' + us.error : `${us.commentsScanned ?? 0} new posts | ${us.newCodes ?? 0} new`}`);
       if (result.queued > 0) console.log(`  Queued: ${result.queued} codes`);
 
       // Apply on arrival: fresh codes are time-sensitive (limited redemptions),
@@ -129,9 +131,11 @@ async function runReddit() {
       // shouldApplyOnArrival is rate-limit conservative: never while a run is
       // active, ≥30 min since the last run that actually attempted codes
       // (no-op cron wake-ups don't count), and a 2h backoff after any
-      // rate-limited run. Falls back to the persisted heartbeat after a daemon
-      // restart — conservative, since the heartbeat also records no-op runs.
-      const lastApply = lastCodeApplyAt || state.getHeartbeat()?.apply || null;
+      // rate-limited run. After a restart it falls back to the persisted
+      // 'codeApply' heartbeat — NOT 'apply', which also records no-op cron
+      // wake-ups and so would resurrect the no-op collision for 30 minutes
+      // after every restart.
+      const lastApply = lastCodeApplyAt || state.getHeartbeat()?.codeApply || null;
       // Rate-limit backoff survives restarts via the heartbeat (in-memory alone
       // would let a restart inside the 2h window bypass the backoff).
       const lastRateLimit = lastRateLimitedAt || state.getHeartbeat()?.ratelimited || null;
@@ -194,7 +198,10 @@ async function runApply(options = {}) {
       lastRateLimitedAt = new Date(); // suppresses apply-on-arrival for 2h
       state.recordHeartbeat('ratelimited'); // persisted — survives a daemon restart
     }
-    if (!result.error && (result.applied ?? 0) > 0) lastCodeApplyAt = new Date(); // real run — starts the on-arrival gap
+    if (!result.error && (result.applied ?? 0) > 0) {
+      lastCodeApplyAt = new Date(); // real run — starts the on-arrival gap
+      state.recordHeartbeat('codeApply'); // persisted twin, for after a restart
+    }
     if (!result.error) state.recordHeartbeat('apply'); // for the staleness watchdog
     server.broadcast({ type: 'apply_done', ...result, scanStatus });
     return result;

@@ -82,7 +82,10 @@ function addToQueue(entries) {
   const newEntries = uniqueEntries.filter(entry => !existing.has(entry.code) && !processed.has(entry.code));
   const newCodes = newEntries.map(entry => entry.code);
   if (!newCodes.length) return 0;
-  for (const entry of uniqueEntries) {
+  // Only NEW codes get catalog metadata. Writing every entry in the batch let a
+  // second sighting (another thread, or the forum) overwrite the first source's
+  // attribution and comment link for a code that was already queued/tried.
+  for (const entry of newEntries) {
     catalog.codes[entry.code] = {
       ...(catalog.codes[entry.code] || {}),
       ...entry,
@@ -205,6 +208,19 @@ function recordApplied(code, ts = new Date().toISOString()) {
     if (isNaN(ms) || ms < cutoff) delete ledger[c];
   }
   writeFileAtomic(cfg.APPLIED_LEDGER_FILE, JSON.stringify(ledger, null, 2));
+}
+
+// ── USCardForum high-water mark ──────────────────────────────────────────────
+// The forum topic never rolls over (one thread since 2020), so instead of the
+// per-thread tried sets Reddit uses, we remember the newest post id already
+// scanned; each scan reads only posts newer than it.
+function getUSCFState() {
+  try { return JSON.parse(fs.readFileSync(cfg.USCF_STATE_FILE, 'utf8')); }
+  catch { return { lastSeenId: 0 }; }
+}
+
+function saveUSCFState(s) {
+  writeFileAtomic(cfg.USCF_STATE_FILE, JSON.stringify(s, null, 2));
 }
 
 // Set of codes applied within the last `days`. `ledger` is injectable for tests.
@@ -636,6 +652,7 @@ module.exports = {
   ueMonthlyReset,
   appendLog, getLog,
   recordApplied, getRecentlyApplied, REAPPLY_SKIP_DAYS,
+  getUSCFState, saveUSCFState,
   getMonthlySavings,
   setHealthWarning, getHealthWarning, clearHealthWarning,
   getHeartbeat, recordHeartbeat,
