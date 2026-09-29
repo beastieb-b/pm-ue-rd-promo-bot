@@ -163,20 +163,25 @@ function renderOverview() {
     badge.style.display = stats.queueCount ? '' : 'none';
   }
 
-  // Show BOTH connected monthly threads (Postmates + UberEATS), not just one.
+  // Every connected source, each a link: both monthly Reddit threads plus the
+  // USCardForum topic.
   const tb = document.getElementById('thread-badge');
   if (tb) {
-    const subs = [];
-    if (stats.threadId) subs.push('r/postmates');
-    if (stats.ueThreadId) subs.push('r/UberEATS');
+    const link = (href, text) => `<a class="source-link" href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+    const parts = [];
+    if (stats.threadId) parts.push(link(`https://www.reddit.com/r/postmates/comments/${stats.threadId}/`, 'r/postmates'));
+    if (stats.ueThreadId) parts.push(link(`https://www.reddit.com/r/UberEATS/comments/${stats.ueThreadId}/`, 'r/UberEATS'));
+    const u = stats.uscf || {};
+    if (u.url) parts.push(link(u.lastPostNumber ? `${u.url}/${u.lastPostNumber}` : u.url, 'USCardForum'));
     const month = formatMonth(stats.threadMonth || stats.ueThreadMonth);
-    if (subs.length) {
+    if (parts.length) {
       const icon = threadBadgeIcon(stats.threadFreshness);
-      tb.textContent = `${icon ? icon + ' ' : ''}${subs.join(' + ')}${month ? ' · ' + month : ''}`;
+      tb.innerHTML = `${icon ? escapeHtml(icon) + ' ' : ''}${parts.join(' + ')}${month ? ' · ' + escapeHtml(month) : ''}`;
       // Tooltip with the exact thread IDs for verification.
       const ids = [];
       if (stats.threadId) ids.push(`r/postmates: ${stats.threadId}`);
       if (stats.ueThreadId) ids.push(`r/UberEATS: ${stats.ueThreadId}`);
+      if (u.topicId) ids.push(`USCardForum: topic ${u.topicId}`);
       tb.title = ids.join('  ·  ');
     } else {
       tb.textContent = 'No thread loaded — run a source scan';
@@ -512,6 +517,21 @@ function renderSettings() {
 
   applyThreadRow('thread-id-label', 'thread-link', stats.threadId, 'postmates', stats.threadMonth);
   applyThreadRow('ue-thread-id-label', 'ue-thread-link', stats.ueThreadId, 'UberEATS', stats.ueThreadMonth);
+
+  // USCardForum — one continuous topic; link jumps to its newest post.
+  {
+    const u = stats.uscf || {};
+    const label = document.getElementById('uscf-label');
+    const link = document.getElementById('uscf-link');
+    if (u.url && u.lastScanAt) {
+      const latest = u.lastPostNumber ? ` · latest post #${u.lastPostNumber}` : '';
+      if (label) label.textContent = `Topic ${u.topicId}${latest} · read ${timeAgo(new Date(u.lastScanAt))}`;
+      if (link) { link.href = u.lastPostNumber ? `${u.url}/${u.lastPostNumber}` : u.url; link.style.display = ''; }
+    } else {
+      if (label) label.textContent = 'Not scanned yet — runs with the next source scan';
+      if (link && u.url) { link.href = u.url; link.style.display = ''; }
+    }
+  }
 
   renderSetupChecklist();
   updateNextRunLabel();

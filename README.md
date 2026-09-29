@@ -109,7 +109,7 @@ There is no login — access is gated by your network (Tailscale / LAN). Set
 | **Queue** | Codes waiting to be tried, with source + region hints. Add codes manually. |
 | **Results** | Every attempt with result, reason, timestamp, and a link to the exact Reddit comment. Per-row actions: **↻ Retry** (failed), **📍 mark region-locked** (success that doesn't count), **✓$ count it** (region-locked that actually works), and delete. |
 | **Activity Log** | Raw event log. |
-| **Settings** | Login status, detected threads, **System Health** self-test, scan/apply intervals, and **Home Region**. |
+| **Settings** | Login status, **Code Sources** (both monthly Reddit threads + the USCardForum topic, each linked), **System Health** self-test, scan/apply intervals, and **Home Region**. The header badge links all three sources too. |
 
 Live status bar: `Automation ON · Scan every 30m · Apply every 2h · Next scan in
 … · Next apply in …`, an **"Applying codes…"** state while a run is in progress,
@@ -168,6 +168,12 @@ count it back).
 Installed as a `launchd` user agent **`com.postmates.promo`** with `RunAtLoad`
 and `KeepAlive`, so it starts at login and restarts if it crashes. It does **not**
 run while the Mac is asleep/off — the dashboard's staleness warning flags that.
+
+Chrome is **closed after every scan** whenever nothing else is using it and
+relaunched on next use (~2 s; logins survive because cookies live in the
+profile on disk). Playwright retains memory for every page a browser context
+has ever loaded, so the never-recycled context used to leak ~300 MB/day and
+crash the daemon at the 4 GB heap limit after ~2½ weeks.
 
 Logs: `data/daemon-error.log` (trimmed to the last 1000 lines on startup) and the
 structured event log `data/run_log.jsonl`.

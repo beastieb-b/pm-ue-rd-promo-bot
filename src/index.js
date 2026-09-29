@@ -253,6 +253,9 @@ function runMaintenance(reason) {
     try {
       if (!fs.existsSync(file)) return;
       const lines = fs.readFileSync(file, 'utf8').split('\n');
+      // The file's trailing newline isn't a line — keeping it made every trim
+      // leave one blank line behind in the kept slice.
+      if (lines[lines.length - 1] === '') lines.pop();
       if (lines.length > maxLines) {
         // launchd opens the daemon logs with O_APPEND before exec, so writes
         // always go to the real end — rewriting the content here is safe.

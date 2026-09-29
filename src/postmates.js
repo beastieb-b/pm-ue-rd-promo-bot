@@ -54,32 +54,46 @@ const PLATFORMS = {
   },
 };
 
+// Only one Chrome may run on the profile at a time, and several callers (a
+// scan's fetches, an apply run, a session probe) can want the browser at once.
+// Concurrent launches share one in-flight promise; a launch waits for any
+// in-flight close to finish (the old Chrome holds the profile lock until it
+// exits). Without this, two callers that both saw "no browser" each launched
+// Chrome and the second failed on the profile lock.
+let _launching = null;
+let _closing = null;
+
 async function getBrowserContext(headless = true) {
+  if (_closing) await _closing;
   if (_context) return _context;
+  if (!_launching) {
+    _launching = (async () => {
+      const ctx = await chromium.launchPersistentContext(cfg.BROWSER_PROFILE_DIR, {
+        channel: 'chrome',
+        headless,
+        chromiumSandbox: true,   // prevents Playwright from injecting --no-sandbox
+        // Drop Playwright's default --enable-automation so Chrome doesn't show the
+        // "controlled by automated software" / "unsupported command-line flag"
+        // infobars (the yellow banner). We achieve the anti-detection that the old
+        // --disable-blink-features=AutomationControlled flag gave us via an init
+        // script below instead, which doesn't trigger the banner.
+        ignoreDefaultArgs: ['--enable-automation'],
+        args: [
+          '--no-first-run',
+          '--disable-default-apps',
+        ],
+        viewport: { width: 1280, height: 800 },
+      });
 
-  _context = await chromium.launchPersistentContext(cfg.BROWSER_PROFILE_DIR, {
-    channel: 'chrome',
-    headless,
-    chromiumSandbox: true,   // prevents Playwright from injecting --no-sandbox
-    // Drop Playwright's default --enable-automation so Chrome doesn't show the
-    // "controlled by automated software" / "unsupported command-line flag"
-    // infobars (the yellow banner). We achieve the anti-detection that the old
-    // --disable-blink-features=AutomationControlled flag gave us via an init
-    // script below instead, which doesn't trigger the banner.
-    ignoreDefaultArgs: ['--enable-automation'],
-    args: [
-      '--no-first-run',
-      '--disable-default-apps',
-    ],
-    viewport: { width: 1280, height: 800 },
-  });
-
-  // Hide the automation fingerprint without a command-line flag.
-  await _context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-  });
-
-  return _context;
+      // Hide the automation fingerprint without a command-line flag.
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      });
+      _context = ctx;
+      return ctx;
+    })().finally(() => { _launching = null; });
+  }
+  return _launching;
 }
 
 // Open a new page, surviving a dead cached context. context.pages() reads
@@ -92,18 +106,35 @@ async function getPage(headless = false) {
     return await ctx.newPage();
   } catch (err) {
     if (!/closed/i.test(err.message)) throw err;
-    try { await _context.close(); } catch {}
-    _context = null;
+    // Discard it only if nobody has replaced it already.
+    if (_context === ctx) await closeBrowser();
     const fresh = await getBrowserContext(headless);
     return await fresh.newPage();
   }
 }
 
 async function closeBrowser() {
-  if (_context) {
-    try { await _context.close(); } catch {}
-    _context = null;
-  }
+  if (_launching) { try { await _launching; } catch {} } // never orphan a Chrome mid-launch
+  const ctx = _context;
+  if (!ctx) return;
+  _context = null; // detach first: new callers wait on _closing, then relaunch
+  _closing = ctx.close().catch(() => {}).finally(() => { _closing = null; });
+  await _closing;
+}
+
+// Playwright retains per-page state for the life of a browser context
+// (measured ~1 MB per heavy Reddit/forum page, freed only when the context
+// closes). Scans open ~5 such pages every 30 min, so the never-recycled
+// persistent context leaked ~310 MB/day and OOM-crashed the daemon at the
+// 4 GB heap limit (Aug 20, after 18 days up). Recycle Chrome after each scan
+// whenever nothing else is using it — the next user relaunches it (~2 s), and
+// cookies live on disk in the profile, so logins survive.
+async function recycleBrowserIfIdle() {
+  // All checks are synchronous and closeBrowser detaches before its first
+  // await, so nothing can claim the browser between the check and the close.
+  if (_applyRunning || _setupRunning || _launching || !_context) return false;
+  await closeBrowser();
+  return true;
 }
 
 // ── First-run setup: open headed browser so user can log in ─────────────────
@@ -123,8 +154,9 @@ async function setupLogin({ target = 'postmates' } = {}) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     // Wait until user closes the browser
-    await new Promise(resolve => page.context().on('close', resolve));
-    _context = null;
+    const ctx = page.context();
+    await new Promise(resolve => ctx.on('close', resolve));
+    if (_context === ctx) _context = null;
     // reset the relevant session — confirmed on the next apply run
     if (isUE) setUeSessionValid(null); else setSessionValid(null);
     console.log(`\n✅ Browser closed — ${name} login session saved.\n`);
@@ -491,6 +523,7 @@ async function fetchUSCFPosts({ topicId, baseUrl, lastSeenId = 0, maxPosts = 30 
       return {
         streamLength: stream.length,
         maxStreamId,
+        highestPostNumber: topic.highest_post_number || null,
         posts: raw.map(p => ({
           id: p.id,
           postNumber: p.post_number,
@@ -912,10 +945,12 @@ async function testDetection() {
     const ok = verdict.result === 'rejected';
     state.appendLog({ type: 'self_test', code: fakeCode, result: verdict.result, ok });
     if (ok) {
-      // Pipeline proven healthy — retire the banner, but never someone else's:
-      // a passing self-test says nothing about a stale monthly thread.
+      // Pipeline proven healthy — retire only banners about the apply
+      // pipeline (a self-test failure, or the "all codes errored" run check).
+      // A passing self-test says nothing about a stale thread or Reddit/forum
+      // blocking, which it used to wipe until the next scan re-raised them.
       const existing = state.getHealthWarning();
-      if (!existing || existing.source !== 'thread_stale') state.clearHealthWarning();
+      if (existing && (existing.source === 'self_test' || existing.source === 'general')) state.clearHealthWarning();
     } else if (verdict.result === 'not_logged_in') {
       // Not a UI problem — the session is logged out. applyCode already set
       // the session flag false, so the 🔑 login banner carries the actionable
@@ -946,4 +981,4 @@ async function testDetection() {
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts, fetchUSCFPosts };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts, fetchUSCFPosts, recycleBrowserIfIdle };

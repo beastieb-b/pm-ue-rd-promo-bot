@@ -599,6 +599,16 @@ function getStats() {
     ueThreadId: getUEThreadId(),
     ueThreadMonth: getUEThreadMonth(),
     threadFreshness: getThreadFreshness(),
+    // USCardForum source — shown/linked alongside the Reddit threads.
+    uscf: (() => {
+      const u = getUSCFState();
+      return {
+        topicId: cfg.USCF_TOPIC_ID,
+        url: `${cfg.USCF_BASE_URL}/t/topic/${cfg.USCF_TOPIC_ID}`,
+        lastPostNumber: u.lastPostNumber || null,
+        lastScanAt: u.lastScanAt || null,
+      };
+    })(),
     // Codes inside the 14-day re-apply skip window — shown on the Queue page so
     // "why isn't X queued?" has a visible answer instead of one log line.
     recentlyAppliedList: Object.entries(loadAppliedLedger())

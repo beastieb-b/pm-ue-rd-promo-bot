@@ -235,6 +235,25 @@ async function fetchComments(threadId, subreddit = 'postmates', maxPages = 5) {
   return allComments;
 }
 
+// Subreddits whose comments are currently unreadable. There is one banner
+// slot, so it names every blocked subreddit and clears only when none are
+// left. In memory on purpose: after a restart the set is empty, so the first
+// healthy scan retires any stale block banner left in health.json.
+const blockedSubs = new Set();
+
+function syncBlockedBanner() {
+  const existing = state.getHealthWarning();
+  if (blockedSubs.size) {
+    if (!existing || existing.source === 'reddit_blocked') {
+      const names = [...blockedSubs].map(s => `r/${s}`).join(' & ');
+      const msg = `${names} comments are unreadable (Reddit is blocking both fetch paths) — new codes are being missed.`;
+      if (!existing || existing.message !== msg) state.setHealthWarning(msg, 'reddit_blocked');
+    }
+  } else if (existing && existing.source === 'reddit_blocked') {
+    state.clearHealthWarning();
+  }
+}
+
 async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, getTriedState, saveTriedState, monthlyReset, subreddit, label, onProgress }) {
   const currentMonth = new Date().toISOString().slice(0, 7);
 
@@ -283,15 +302,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   // serving search pages normally — so curl reads an empty shell and the scan
   // would "succeed" with 0 comments. Read the thread through our own Chrome
   // instead (a rendered logged-out browser still gets the page).
+  const triedState = getTriedState();
+  const triedSet = new Set(triedState.tried_codes);
+
   if (comments.length === 0) {
-    try {
-      const viaBrowser = await require('./postmates').fetchRedditComments(newestEntry.id, subreddit);
-      if (viaBrowser && viaBrowser.length) {
-        state.appendLog({ type: 'reddit_fetch_browser', source: label, comments: viaBrowser.length });
-        comments = viaBrowser;
+    // A thread that has already produced codes reading empty is almost always
+    // a transient page-load blip, not a real block — all four watchdog alarms
+    // on Sep 25–26 were isolated reads that recovered on the next scan. So for
+    // such threads, re-read once (after a pause) before concluding anything.
+    const attempts = triedSet.size > 0 ? 2 : 1;
+    for (let attempt = 0; attempt < attempts && comments.length === 0; attempt++) {
+      if (attempt > 0) await sleep(5000);
+      try {
+        const viaBrowser = await require('./postmates').fetchRedditComments(newestEntry.id, subreddit);
+        if (viaBrowser && viaBrowser.length) {
+          state.appendLog({ type: 'reddit_fetch_browser', source: label, comments: viaBrowser.length, ...(attempt > 0 ? { note: 'recovered on re-read' } : {}) });
+          comments = viaBrowser;
+        }
+      } catch (err) {
+        state.appendLog({ type: 'reddit_fetch_browser', source: label, error: err.message.slice(0, 120) });
       }
-    } catch (err) {
-      state.appendLog({ type: 'reddit_fetch_browser', source: label, error: err.message.slice(0, 120) });
     }
   }
 
@@ -310,28 +340,26 @@ async function scanSubreddit({ sourceKey, detectFn, getThreadId, saveThreadId, g
   for (const [code, ctx] of codeContext) {
     if (ctx.commentUrl) state.mergeCodeMeta(code, { commentUrl: ctx.commentUrl });
   }
-  const triedState = getTriedState();
-  const triedSet = new Set(triedState.tried_codes);
 
   // Silent-failure watchdog: a thread that has already produced codes suddenly
-  // reading ZERO comments is Reddit blocking us, not an empty thread — say so
-  // loudly (source error + banner) instead of reporting a healthy no-op scan.
-  // (This exact mode went unnoticed for 9 days in July 2026.)
+  // reading ZERO comments (even after a re-read) is Reddit blocking us, not an
+  // empty thread — say so loudly (source error + banner) instead of reporting a
+  // healthy no-op scan. (This exact mode went unnoticed for 9 days in July.)
   if (comments.length === 0 && triedSet.size > 0) {
     const note = 'Thread returned no comments — Reddit is likely gating the fetch (both curl and browser paths failed)';
     setSourceStatus(sourceKey, { status: 'error', note, usableCodes: 0, sourceUrl: `https://www.reddit.com/r/${subreddit}/comments/${newestEntry.id}/` });
     state.appendLog({ type: 'reddit_empty_thread_anomaly', source: label, thread_id: newestEntry.id });
-    const existing = state.getHealthWarning();
-    if (!existing || existing.source === 'reddit_blocked') {
-      state.setHealthWarning(`r/${subreddit} comments are unreadable (Reddit is blocking both fetch paths) — new codes are being missed.`, 'reddit_blocked');
-    }
+    blockedSubs.add(subreddit);
+    syncBlockedBanner();
     onProgress?.({ source: label, step: 'error', message: note });
     return { threadId: newestEntry.id, commentsScanned: 0, codesFound: 0, newCodes: 0, queued: 0 };
   }
-  // Comments flowing again — retire our own blocked banner if it's up.
+  // Comments flowing — this subreddit is no longer blocked. (Tracked per
+  // subreddit: a healthy r/UberEATS read used to clear an r/postmates block
+  // banner, since both scans run back to back.)
   if (comments.length > 0) {
-    const existing = state.getHealthWarning();
-    if (existing && existing.source === 'reddit_blocked') state.clearHealthWarning();
+    blockedSubs.delete(subreddit);
+    syncBlockedBanner();
   }
 
   const candidates = [...allCodes].filter(c => !triedSet.has(c)).sort();
@@ -487,7 +515,11 @@ async function scanUSCF({ onProgress } = {}) {
 
   // Advance to the newest post in the topic — including old/deleted/codeless
   // ones — so no post is ever scanned twice.
-  state.saveUSCFState({ lastSeenId: Math.max(lastSeenId, res.maxStreamId || 0), lastScanAt: nowIso });
+  state.saveUSCFState({
+    lastSeenId: Math.max(lastSeenId, res.maxStreamId || 0),
+    lastPostNumber: res.highestPostNumber || st.lastPostNumber || null, // for the dashboard's "latest post" link
+    lastScanAt: nowIso,
+  });
 
   setSourceStatus(sourceKey, {
     status: 'ok',
@@ -582,6 +614,11 @@ async function runRedditCheck({ onProgress } = {}) {
   } catch (err) {
     us = { error: err.message };
   }
+
+  // Release what Playwright accumulated during this scan's page loads (the
+  // cause of the Aug 20 out-of-memory crash) — skipped if an apply run, login
+  // or session check is using the browser right now.
+  try { await require('./postmates').recycleBrowserIfIdle(); } catch {}
 
   const scans = [pm, ue, us];
   const totalNew = scans.reduce((sum, entry) => sum + (entry.newCodes || 0), 0);

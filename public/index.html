@@ -343,10 +343,10 @@
           <div class="setup-steps" id="settings-setup-steps"></div>
         </div>
 
-        <!-- Reddit threads card -->
+        <!-- Code sources card (Reddit threads + USCardForum) -->
         <div class="card settings-card">
           <div class="card-header">
-            <h3>Reddit Threads</h3>
+            <h3>Code Sources</h3>
             <span class="card-badge" id="thread-month-badge">Loading...</span>
           </div>
           <div class="settings-row">
@@ -365,6 +365,16 @@
               <div class="settings-desc">r/UberEATS · monthly promo code thread</div>
             </div>
             <a id="ue-thread-link" href="#" target="_blank" class="btn btn-secondary" style="text-decoration:none;display:none">
+              Open ↗
+            </a>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-row">
+            <div class="settings-info">
+              <div class="settings-label" id="uscf-label">Not scanned yet</div>
+              <div class="settings-desc">USCardForum · UberEATs/Postmates coupon topic (one continuous thread — no monthly reset)</div>
+            </div>
+            <a id="uscf-link" href="#" target="_blank" class="btn btn-secondary" style="text-decoration:none;display:none">
               Open ↗
             </a>
           </div>
@@ -425,7 +435,7 @@
           <div class="settings-row">
             <div class="settings-info">
               <div class="settings-label">Source Scan Interval</div>
-              <div class="settings-desc">How often to scan Reddit and Slickdeals for new promo codes</div>
+              <div class="settings-desc">How often to scan Reddit and USCardForum for new promo codes</div>
             </div>
             <div class="settings-control">
               <select class="settings-select" id="scan-interval" onchange="saveScanInterval()">
@@ -474,7 +484,7 @@
           <div class="how-it-works">
             <div class="how-step">
               <span class="how-num">1</span>
-              <div><strong>Source Scan</strong> — Checks the monthly r/postmates and r/UberEATS promo threads and extracts existing-user codes (UberEats codes work on Postmates too).</div>
+              <div><strong>Source Scan</strong> — Checks the monthly r/postmates and r/UberEATS promo threads plus the USCardForum coupon topic, and extracts existing-user codes (UberEats codes work on Postmates too).</div>
             </div>
             <div class="how-step">
               <span class="how-num">2</span>
