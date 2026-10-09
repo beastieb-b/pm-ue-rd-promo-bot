@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const { chromium } = require('playwright');
 const cfg = require('./config');
 const state = require('./state');
@@ -96,29 +97,75 @@ async function getBrowserContext(headless = true) {
   return _launching;
 }
 
+// Hard deadline for browser work. Several Playwright calls have no timeout at
+// all (evaluate, mouse.wheel, locator.count, newPage, context.close) and wait
+// forever if a page's renderer freezes — which is how one frozen Reddit page
+// held the scan slot from Sep 29 to Oct 9, silently blocking every scan, the
+// October rollover, and the daily self-test for 10 days.
+function withDeadline(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded its ${Math.round(ms / 1000)}s deadline`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Playwright's locator.isVisible() IGNORES its timeout option and answers
+// instantly (measured: isVisible({ timeout: 6000 }) returned in 0.19 s), so
+// every "wait up to N s" check written with it was really one snapshot. This
+// actually waits.
+async function visibleWithin(locator, ms) {
+  try { await locator.waitFor({ state: 'visible', timeout: ms }); return true; }
+  catch { return false; }
+}
+
 // Open a new page, surviving a dead cached context. context.pages() reads
 // Playwright's local state and never detects that Chrome actually quit —
 // newPage() is the only honest liveness check, so we try it and relaunch
-// the browser once if the cached context turns out to be closed.
+// the browser once if the cached context turns out to be closed or wedged.
 async function getPage(headless = false) {
   const ctx = await getBrowserContext(headless);
   try {
-    return await ctx.newPage();
+    return await withDeadline(ctx.newPage(), 30000, 'Opening a browser page');
   } catch (err) {
-    if (!/closed/i.test(err.message)) throw err;
+    if (!/closed|deadline/i.test(err.message)) throw err;
     // Discard it only if nobody has replaced it already.
     if (_context === ctx) await closeBrowser();
     const fresh = await getBrowserContext(headless);
-    return await fresh.newPage();
+    return await withDeadline(fresh.newPage(), 30000, 'Opening a browser page');
   }
 }
 
+// Close a page without trusting it to cooperate: if close itself hangs (a
+// frozen renderer), recycle the whole browser so nothing stays wedged.
+async function closePageHard(page) {
+  try { await withDeadline(page.close(), 10000, 'Closing a page'); }
+  catch { await closeBrowser(); }
+}
+
+// Run `work(page)` on a fresh page under a hard deadline. The page is always
+// closed (forcefully if it won't close), so a frozen page fails one read
+// instead of wedging the scan slot forever.
+async function withPage(label, ms, work) {
+  const page = await getPage(false);
+  try { return await withDeadline(work(page), ms, label); }
+  finally { await closePageHard(page); }
+}
+
+// Last resort when Chrome won't close: SIGKILL every process running on the
+// app's profile, so the profile lock is released and the next launch works.
+function killProfileChrome() {
+  try { execFileSync('pkill', ['-9', '-f', cfg.BROWSER_PROFILE_DIR]); } catch {}
+}
+
 async function closeBrowser() {
-  if (_launching) { try { await _launching; } catch {} } // never orphan a Chrome mid-launch
+  if (_launching) { try { await withDeadline(_launching, 200000, 'Browser launch'); } catch {} } // never orphan a Chrome mid-launch
   const ctx = _context;
   if (!ctx) return;
   _context = null; // detach first: new callers wait on _closing, then relaunch
-  _closing = ctx.close().catch(() => {}).finally(() => { _closing = null; });
+  _closing = withDeadline(ctx.close(), 20000, 'Closing the browser')
+    .catch(() => killProfileChrome())
+    .finally(() => { _closing = null; });
   await _closing;
 }
 
@@ -340,17 +387,22 @@ async function dismissNoInputModal(page) {
   return true;
 }
 
-// Detect the logged-out marketing landing page. When a session expires, the
-// saved auth cookie can still be present and unexpired, so isLoggedIn() (a
-// cookie-presence check) keeps reporting "logged in" — but the site bounces us
-// to the logged-out homepage (hero + "Log in" / "Sign up"). A logged-in session
-// never renders a "Sign up" affordance, so a visible Sign-up button/link is a
-// reliable "not authenticated" signal on both postmates.com and ubereats.com.
+// Detect a logged-out page. When a session expires, the saved auth cookie can
+// still be present and unexpired, so isLoggedIn() (a cookie-presence check)
+// keeps reporting "logged in" — the page itself has to be read.
+//
+// Measured side by side (Oct 2026, Postmates and UberEats): a logged-OUT page
+// has "Log in"/"Sign up" links into /login-redirect/; a logged-IN page has
+// none. The old test — any visible "Sign up" — also matched the footer's
+// "Sign up to deliver" (driver recruiting) on logged-IN pages, so whenever the
+// promo modal was slow or covered it declared a working session dead: the
+// false "session expired" alarms of Jul, Sep and Oct.
 async function looksLoggedOut(page) {
   try {
-    const signup = page.getByRole('button', { name: /sign\s*up/i })
-      .or(page.getByRole('link', { name: /sign\s*up/i }));
-    return await signup.first().isVisible({ timeout: 3000 }).catch(() => false);
+    if (await page.locator('a[href*="login-redirect"]').first().isVisible().catch(() => false)) return true;
+    const logIn = page.getByRole('link', { name: /^(log\s*in|sign\s*in)$/i })
+      .or(page.getByRole('button', { name: /^(log\s*in|sign\s*in)$/i }));
+    return await logIn.first().isVisible().catch(() => false);
   } catch { return false; }
 }
 
@@ -390,7 +442,7 @@ async function openPromoModal(page, plat) {
     }
     await dismissPopups(page);
     await dismissNoInputModal(page);
-    modalOpen = await page.locator(MODAL_SELECTOR).first().isVisible({ timeout: 6000 }).catch(() => false);
+    modalOpen = await visibleWithin(page.locator(MODAL_SELECTOR).first(), 8000); // really waits (isVisible doesn't)
     if (!modalOpen) sawLoggedOut = await looksLoggedOut(page);
   }
   if (modalOpen) return 'open';
@@ -413,6 +465,22 @@ async function openPromoModal(page, plat) {
 // UberEats session may otherwise go days between fallback attempts).
 // Definitive outcomes update the session flag; 'blocked' is inconclusive
 // (probably logged in, but unproven) and deliberately leaves the flag alone.
+
+// Codes Postmates rejected while UberEats was logged out never got their
+// UberEats attempt. Once the UberEats session verifies working again, move
+// them back into the queue flagged ueOnly, so the next run tries them on
+// UberEats directly instead of repeating the Postmates attempt.
+function requeuePendingUberEats() {
+  const pending = Object.entries(state.getCodeCatalog().codes)
+    .filter(([, m]) => m && m.pendingUberEats).map(([c]) => c);
+  for (const code of pending) {
+    state.requeueResult(code);
+    state.mergeCodeMeta(code, { pendingUberEats: false, ueOnly: true });
+  }
+  if (pending.length) state.appendLog({ type: 'ubereats_requeue', codes: pending, note: 'UberEats session back — retrying the codes it missed' });
+  return pending.length;
+}
+
 async function verifySession(platform = 'postmates') {
   const plat = PLATFORMS[platform] || PLATFORMS.postmates;
   // Busy early-outs must still leave a trace — a silently skipped post-login
@@ -430,11 +498,12 @@ async function verifySession(platform = 'postmates') {
   let page = null;
   try {
     page = await getPage(false);
-    const outcome = await openPromoModal(page, plat);
+    const outcome = await withDeadline(openPromoModal(page, plat), 120000, 'Session check');
     const verified = outcome === 'open' ? true
       : (outcome === 'off_domain' || outcome === 'logged_out') ? false
       : null;
     if (verified !== null) plat.setValid(verified);
+    if (platform === 'ubereats' && verified === true) requeuePendingUberEats();
     if (verified === true) {
       // A confirmed-working session retires a self-test banner that was raised
       // by a not_logged_in verdict — that failure is resolved now; don't leave
@@ -450,7 +519,7 @@ async function verifySession(platform = 'postmates') {
     state.appendLog({ type: 'session_verified', platform, ok: null, error: err.message.slice(0, 100) });
     return { verified: null, error: err.message };
   } finally {
-    if (page) { try { await page.close(); } catch {} }
+    if (page) await closePageHard(page);
     _applyRunning = false;
   }
 }
@@ -462,8 +531,7 @@ async function verifySession(platform = 'postmates') {
 // needed) and let the caller pick out the monthly-thread posts.
 async function fetchSubredditPosts(subreddit) {
   if (_setupRunning) return [];
-  const page = await getPage(false);
-  try {
+  return withPage('Reddit front-page read', 60000, async (page) => {
     await page.goto(`https://www.reddit.com/r/${subreddit}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(4000);
     return await page.evaluate(() =>
@@ -472,9 +540,26 @@ async function fetchSubredditPosts(subreddit) {
         permalink: p.getAttribute('permalink') || '',
       }))
     );
-  } finally {
-    try { await page.close(); } catch {}
-  }
+  });
+}
+
+// Reddit's own search, read through the browser. The monthly thread isn't
+// always pinned or "hot" — October 2026's r/UberEATS thread never appeared on
+// the front page, so front-page detection couldn't see it — but it always
+// shows up in a newest-first search.
+async function fetchSubredditSearch(subreddit, query) {
+  if (_setupRunning) return [];
+  return withPage('Reddit search', 60000, async (page) => {
+    const q = encodeURIComponent(query);
+    await page.goto(`https://www.reddit.com/r/${subreddit}/search/?q=${q}&restrict_sr=1&sort=new&t=month`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(4000);
+    return await page.evaluate(() =>
+      [...document.querySelectorAll('a[href*="/comments/"]')].map(a => ({
+        title: (a.innerText || '').trim(),
+        permalink: a.getAttribute('href') || '',
+      }))
+    );
+  });
 }
 
 // ── USCardForum (Discourse) fetch via the browser ───────────────────────────
@@ -485,8 +570,7 @@ async function fetchSubredditPosts(subreddit) {
 // newest posts past our high-water mark via /t/{id}/posts.json.
 async function fetchUSCFPosts({ topicId, baseUrl, lastSeenId = 0, maxPosts = 30 }) {
   if (_setupRunning) return null; // never fight the login window for the browser
-  const page = await getPage(false);
-  try {
+  return withPage('USCardForum read', 90000, async (page) => {
     await page.goto(`${baseUrl}/t/topic/${topicId}`, { waitUntil: 'domcontentloaded', timeout: 40000 });
     await page.waitForTimeout(3000);
     return await page.evaluate(async ({ topicId, lastSeenId, maxPosts }) => {
@@ -533,9 +617,7 @@ async function fetchUSCFPosts({ topicId, baseUrl, lastSeenId = 0, maxPosts = 30 
         })),
       };
     }, { topicId, lastSeenId, maxPosts });
-  } finally {
-    try { await page.close(); } catch {}
-  }
+  });
 }
 
 // ── Reddit comment fetch via the browser ────────────────────────────────────
@@ -548,8 +630,7 @@ async function fetchUSCFPosts({ topicId, baseUrl, lastSeenId = 0, maxPosts = 30 
 // Chrome instead. No Reddit account or cookie is needed for this.
 async function fetchRedditComments(threadId, subreddit) {
   if (_setupRunning) return null; // never fight the login window for the browser
-  const page = await getPage(false);
-  try {
+  return withPage('Reddit comment read', 150000, async (page) => {
     await page.goto(`https://www.reddit.com/r/${subreddit}/comments/${threadId}/?limit=500`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(4000);
 
@@ -591,9 +672,7 @@ async function fetchRedditComments(threadId, subreddit) {
     return comments
       .filter(c => c.author !== 'automoderator' && !c.distinguished && c.text && c.text.length > 3)
       .map(c => ({ text: c.text, permalink: c.permalink ? `https://www.reddit.com${c.permalink}` : null }));
-  } finally {
-    try { await page.close(); } catch {}
-  }
+  });
 }
 
 async function applyCode(page, code, platform = 'postmates') {
@@ -643,15 +722,17 @@ async function applyCode(page, code, platform = 'postmates') {
       }
     }
     try {
-      // Modal-scoped selectors first, then any input inside the modal.
+      // Wait (for real) until the modal has an input, then pick the best one:
+      // modal-scoped selectors first, then any input inside the modal.
+      await visibleWithin(modalLocator.locator('input').first(), 5000);
       let loc = null;
       for (const sel of inputSelectors) {
         const cand = modalLocator.locator(sel).first();
-        if (await cand.isVisible({ timeout: 3000 }).catch(() => false)) { loc = cand; break; }
+        if (await cand.isVisible().catch(() => false)) { loc = cand; break; }
       }
       if (!loc) {
         const cand = modalLocator.locator('input').first();
-        if (await cand.isVisible({ timeout: 3000 }).catch(() => false)) loc = cand;
+        if (await cand.isVisible().catch(() => false)) loc = cand;
       }
       if (!loc) {
         if (entryAttempt > 0) return { result: 'error', detail: 'Could not find promo input inside modal' };
@@ -782,15 +863,23 @@ async function runApplyCodes(options = {}) {
 
       if (onProgress) onProgress({ code, status: 'trying' });
 
+      // Codes parked while UberEats was logged out come back flagged ueOnly:
+      // Postmates already rejected them, so go straight to the UberEats retry.
+      const parked = (state.getCodeCatalog().codes[code] || {}).ueOnly;
       let applyResult;
       try {
-        applyResult = await applyCode(page, code);
+        applyResult = parked
+          ? { result: 'rejected', detail: (state.getCodeCatalog().codes[code] || {}).pmDetail || 'Not valid on Postmates' }
+          : await withDeadline(applyCode(page, code), 180000, 'Code attempt');
       } catch (err) {
         applyResult = { result: 'error', detail: err.message.slice(0, 100) };
+        // A deadline means this page may be frozen — swap in a fresh one so
+        // the rest of the run isn't stuck behind it.
+        if (/deadline/.test(err.message)) { await closePageHard(page); page = await getPage(false); }
       }
 
       results.push({ code, ...applyResult });
-      state.appendLog({ type: 'code_result', code, result: applyResult.result, detail: applyResult.detail });
+      if (!parked) state.appendLog({ type: 'code_result', code, result: applyResult.result, detail: applyResult.detail });
 
       if (onProgress) onProgress({ code, status: applyResult.result, detail: applyResult.detail });
 
@@ -826,8 +915,17 @@ async function runApplyCodes(options = {}) {
       // UberEats fallback: a code rejected on Postmates for any reason EXCEPT
       // "Code expired" may be a valid UberEats code (many come from r/UberEATS).
       // Retry it on UberEats using the same modal/detection + rate handling.
-      if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired') {
+      if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired' && getUeSessionValid() === false) {
+        // UberEats is known logged out: an attempt can only fail, and that
+        // failure used to be final — the code never got its UberEats chance.
+        // Park it instead; it's requeued for UberEats once the session is back.
+        state.mergeCodeMeta(code, { pendingUberEats: true, ueOnly: false, pmDetail: applyResult.detail });
+        state.appendLog({ type: 'ubereats_parked', code, note: 'UberEats logged out — will retry there after login' });
+        applyResult = { result: applyResult.result, detail: `${applyResult.detail} · UberEats: retry after login` };
+        results[results.length - 1] = { code, ...applyResult };
+      } else if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired') {
         if (onProgress) onProgress({ code, status: 'trying_ubereats' });
+        if (parked) state.mergeCodeMeta(code, { ueOnly: false });
         state.appendLog({ type: 'ubereats_fallback', code, postmates_detail: applyResult.detail });
         // Up to 2 attempts: the UberEats modal occasionally closes mid-flow
         // (transient — a fresh visit works). Without the retry a blip would
@@ -836,14 +934,15 @@ async function runApplyCodes(options = {}) {
         let ue;
         for (let ueAttempt = 0; ueAttempt < 2; ueAttempt++) {
           try {
-            ue = await applyCode(page, code, 'ubereats');
+            ue = await withDeadline(applyCode(page, code, 'ubereats'), 180000, 'UberEats attempt');
           } catch (err) {
             try {
               const debugDir = path.join(cfg.DATA_DIR, 'debug-screenshots');
               fs.mkdirSync(debugDir, { recursive: true });
               const ts = new Date().toISOString().replace(/[:.]/g, '-');
-              await page.screenshot({ path: path.join(debugDir, `ue-error-${ts}.png`), fullPage: false });
+              await withDeadline(page.screenshot({ path: path.join(debugDir, `ue-error-${ts}.png`), fullPage: false }), 10000, 'Screenshot');
             } catch {}
+            if (/deadline/.test(err.message)) { await closePageHard(page); page = await getPage(false); }
             ue = { result: 'error', detail: err.message.slice(0, 100) };
           }
           if (ue.result !== 'error') break;
@@ -875,8 +974,11 @@ async function runApplyCodes(options = {}) {
             ue.result === 'rejected'
               ? (ue.detail === applyResult.detail ? 'also on UberEats' : `UberEats: ${ue.detail}`)
               : ue.result === 'not_logged_in'
-                ? 'UberEats: login needed'
+                ? 'UberEats: retry after login'
                 : 'UberEats attempt errored';
+          if (ue.result === 'not_logged_in') {
+            state.mergeCodeMeta(code, { pendingUberEats: true, pmDetail: applyResult.detail });
+          }
           applyResult = { result: applyResult.result, detail: `${applyResult.detail} · ${ueNote}` };
           results[results.length - 1] = { code, ...applyResult };
         }
@@ -919,9 +1021,7 @@ async function runApplyCodes(options = {}) {
     state.appendLog({ type: 'apply_run_error', error: err.message });
     return { error: `Apply run failed: ${err.message}` };
   } finally {
-    if (page) {
-      try { await page.close(); } catch {}
-    }
+    if (page) await closePageHard(page);
     _applyRunning = false;
   }
 }
@@ -940,7 +1040,7 @@ async function testDetection() {
   let page = null;
   try {
     page = await getPage(false);
-    const verdict = await applyCode(page, fakeCode);
+    const verdict = await withDeadline(applyCode(page, fakeCode), 180000, 'Self-test');
 
     const ok = verdict.result === 'rejected';
     state.appendLog({ type: 'self_test', code: fakeCode, result: verdict.result, ok });
@@ -976,9 +1076,9 @@ async function testDetection() {
     state.setHealthWarning(`Self-test crashed (${err.message.slice(0, 80)}) — run it again from Settings → System Health; if it keeps failing the Postmates UI may have changed.`, 'self_test');
     return { ok: false, error: err.message };
   } finally {
-    if (page) { try { await page.close(); } catch {} }
+    if (page) await closePageHard(page);
     _applyRunning = false;
   }
 }
 
-module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts, fetchUSCFPosts, recycleBrowserIfIdle };
+module.exports = { runApplyCodes, applyCode, classify, setupLogin, closeBrowser, getBrowserContext, getSessionValid, getUeSessionValid, isBusy, testDetection, verifySession, fetchRedditComments, fetchSubredditPosts, fetchUSCFPosts, recycleBrowserIfIdle, withDeadline, fetchSubredditSearch };

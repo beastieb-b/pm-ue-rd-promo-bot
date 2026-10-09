@@ -50,3 +50,11 @@ test('real USCardForum posts yield exactly their codes', () => {
   ];
   assert.deepStrictEqual([...extractCodes(posts)].sort(), ['093GC', 'BRUINSFAIR', 'RIOT917', 'SHARETHELOVE']);
 });
+
+// Real USCardForum posts (Oct 2026) whose noise got queued and burned apply slots.
+test('clock times and zero-for-O words are not codes', () => {
+  const expiry = '小号邮箱看到的：\n\nFOODLOVEMMQ\n\nExpires Oct 5, 2026 12:00AM PT. Valid for up to $20 off';
+  assert.deepStrictEqual([...extractCodes([expiry])], ['FOODLOVEMMQ']);   // not 00AM
+  assert.deepStrictEqual([...extractCodes(['0ops 应该是targeted'])], []);   // not 0OPS
+  assert.deepStrictEqual([...extractCodes(['Starts at 5PM, code EATS20OFF'])], ['EATS20OFF']);
+});

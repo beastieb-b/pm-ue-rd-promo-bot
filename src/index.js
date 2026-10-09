@@ -99,6 +99,28 @@ function updateNextScanTime() {
 // Exposed so server.js can include it in /api/stats
 function getScanStatus() { return scanStatus; }
 
+// Outer safety net. Every browser read and code attempt has its own deadline,
+// but if a whole run still overruns, recycle the browser (every pending
+// Playwright call then rejects), give the run a moment to unwind, and free the
+// slot. Before this, one frozen page held the scan slot for 10 days
+// (Sep 29 → Oct 9): no scans, a missed monthly rollover, and the daily
+// self-test skipped every morning as "a run is in progress".
+const SCAN_DEADLINE_MS = 10 * 60 * 1000;
+const APPLY_DEADLINE_MS = 45 * 60 * 1000; // 5 codes x 2 platforms + 2-min gaps fits well inside
+
+async function guardRun(promise, ms, label) {
+  try {
+    return await postmates.withDeadline(promise, ms, label);
+  } catch (err) {
+    if (!/deadline/.test(err.message)) throw err;
+    console.error(`  ⛔ ${err.message} — recycling the browser to unstick it`);
+    state.appendLog({ type: 'run_deadline', what: label, error: err.message });
+    await postmates.closeBrowser();
+    await Promise.race([promise.catch(() => {}), new Promise(r => setTimeout(r, 20000))]);
+    return { error: err.message };
+  }
+}
+
 async function runReddit() {
   if (redditRunning) {
     const result = { error: 'Reddit check already running' };
@@ -109,9 +131,10 @@ async function runReddit() {
   scanStatus.lastScanError = null;
   try {
     console.log('Running Reddit check...');
-    const result = await reddit.runRedditCheck({
+    const scan = reddit.runRedditCheck({
       onProgress: (p) => server.broadcast({ type: 'reddit_progress', ...p }),
     });
+    const result = await guardRun(scan, SCAN_DEADLINE_MS, 'Source scan');
     scanStatus.lastScanAt = new Date();
     updateNextScanTime();
     if (result.error) {
@@ -176,7 +199,7 @@ async function runApply(options = {}) {
   server.broadcast({ type: 'apply_started', scanStatus });
   try {
     console.log('Running code applier...');
-    const result = await postmates.runApplyCodes({
+    const run = postmates.runApplyCodes({
       ...options,
       onProgress: (u) => {
         console.log(`  → ${u.code}: ${u.status}${u.detail ? ' — ' + u.detail : ''}`);
@@ -184,6 +207,7 @@ async function runApply(options = {}) {
         server.broadcast({ type: 'apply_progress', ...u, scanStatus });
       },
     });
+    const result = await guardRun(run, APPLY_DEADLINE_MS, 'Apply run');
     if (result.error) {
       console.error('  Apply error:', result.error);
     } else {

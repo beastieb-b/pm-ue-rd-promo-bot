@@ -28,7 +28,7 @@ const FILTER_WORDS = new Set([
   'WORKS', 'WORKED', 'APPLY', 'CHECKOUT', 'ENTER', 'CLICK', 'ELIGIBLE',
   'AVAILABLE', 'VALID', 'INVALID', 'EXPIRES', 'EXPIRATION',
   // Platform names ("Uber eats $10 off $20" matched the "WORD $X off" rule).
-  'EATS', 'POSTMATE',
+  'EATS', 'POSTMATE', 'OOPS',
   // Words from pasted promo-detail blocks ("Location: United States",
   // "Details", "$30 Minimum", "Pacific Daylight Time") — not codes.
   'DETAILS', 'LOCATION', 'UNITED', 'STATES', 'PACIFIC', 'DAYLIGHT', 'MINIMUM',
@@ -107,6 +107,15 @@ const FILTER_WORDS = new Set([
   'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH', 'SIXTH', 'SEVENTH',
 ]);
 
+// Tokens shaped like codes that aren't: filter words, clock times
+// ("Expires 12:00AM PT" → 00AM), and filter words typed with a zero for an O
+// ("0ops" → 0OPS).
+function isNoise(w) {
+  const u = w.toUpperCase();
+  return FILTER_WORDS.has(u) || /^\d{1,4}(AM|PM)$/.test(u) || FILTER_WORDS.has(u.replace(/0/g, 'O'));
+}
+
+
 // Extract codes while keeping, per code: the joined comment text it appeared in
 // (for region detection) and the permalink of the first comment that mentioned
 // it (so the UI can deep-link to the exact Reddit comment).
@@ -153,7 +162,7 @@ function extractCodes(commentTexts) {
     const hasPromoContext = /\b(code|promo|use|try|apply|coupon|discount)\b[:\s]+/i.test(cleaned);
     for (const m of capsMatches) {
       const w = m[1];
-      if (FILTER_WORDS.has(w)) continue;
+      if (isNoise(w)) continue;
       const hasDigit = /\d/.test(w);
       if (hasDigit) {
         codes.add(w); // digit present → very likely a code
@@ -165,13 +174,13 @@ function extractCodes(commentTexts) {
     // Pattern 2: Mixed case with numbers (e.g., OneDay10, 1XPER, Waves25)
     const mixedAlphaNum = cleaned.matchAll(/\b([A-Za-z]+\d+[A-Za-z0-9]*)\b/g);
     for (const m of mixedAlphaNum) {
-      if (m[1].length >= 4 && !FILTER_WORDS.has(m[1].toUpperCase())) {
+      if (m[1].length >= 4 && !isNoise(m[1])) {
         codes.add(m[1].toUpperCase());
       }
     }
     const mixedNumAlpha = cleaned.matchAll(/\b(\d+[A-Za-z]+[A-Za-z0-9]*)\b/g);
     for (const m of mixedNumAlpha) {
-      if (m[1].length >= 4 && !FILTER_WORDS.has(m[1].toUpperCase())) {
+      if (m[1].length >= 4 && !isNoise(m[1])) {
         codes.add(m[1].toUpperCase());
       }
     }
@@ -179,13 +188,13 @@ function extractCodes(commentTexts) {
     // Pattern 3: Word near "code:", "try:", "use:", "promo:" followed by $ or "off"
     const promoCtx = cleaned.matchAll(/(?:^|\n|code[:\s]+|try[:\s]+|use[:\s]+|promo[:\s]+)([A-Za-z]{4,})(?:\s+\$|\s+\d+%?\s*off)/gi);
     for (const m of promoCtx) {
-      if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
+      if (!isNoise(m[1])) codes.add(m[1].toUpperCase());
     }
 
     // Pattern 4: "WORD $X off" — word immediately before a dollar amount + off
     const dollarOff = cleaned.matchAll(/\b([A-Za-z]{4,})\s+\$\d+\s+off\b/gi);
     for (const m of dollarOff) {
-      if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
+      if (!isNoise(m[1])) codes.add(m[1].toUpperCase());
     }
 
     // Pattern 5: Standalone capitalized word on its own line in a promo-context comment.
@@ -197,7 +206,7 @@ function extractCodes(commentTexts) {
     if (/\$|off|promo|code|discount|coupon|deal/i.test(cleaned)) {
       const standalone = cleaned.matchAll(/(?:^|\n)[ \t]*([A-Z][a-z]{3,})(?=[ \t]*(?:$|\n|[-–—|(]|\$))/g);
       for (const m of standalone) {
-        if (!FILTER_WORDS.has(m[1].toUpperCase())) codes.add(m[1].toUpperCase());
+        if (!isNoise(m[1])) codes.add(m[1].toUpperCase());
       }
     }
   }

@@ -175,7 +175,19 @@ async function detectThread(subreddit) {
   // stickied at the top. Sort by post id (base36, increases over time) so
   // entries[0] is the newest monthly thread regardless of page order.
   try {
-    const posts = await require('./postmates').fetchSubredditPosts(subreddit);
+    // Search first — the monthly thread isn't always pinned/hot (October
+    // 2026's r/UberEATS thread never reached the front page) — then the front
+    // page, which catches a pinned thread search hasn't indexed yet. Either
+    // read can fail without sinking the other.
+    const pm = require('./postmates');
+    const posts = [];
+    for (const [what, read] of [
+      ['search', () => pm.fetchSubredditSearch(subreddit, 'Monthly Existing User Promo Code Thread')],
+      ['front page', () => pm.fetchSubredditPosts(subreddit)],
+    ]) {
+      try { posts.push(...((await read()) || [])); }
+      catch (err) { state.appendLog({ type: 'thread_detect_browser', subreddit, via: what, error: err.message.slice(0, 100) }); }
+    }
     const linkRe = new RegExp(`^/r/${subreddit}/comments/([a-z0-9]+)/([^/]+)`, 'i');
     const seen = new Set();
     const entries = [];
