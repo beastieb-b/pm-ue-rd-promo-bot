@@ -422,6 +422,42 @@ const MODAL_SELECTOR = '[role="dialog"]:has(input), [aria-modal="true"]:has(inpu
 //   'off_domain' — bounced off the platform entirely (not logged in)
 //   'logged_out' — persistently on the logged-out landing page (session dead)
 //   'blocked'    — on-domain and logged-in-looking, but the modal never opened
+// When the site's own session lapses, the Uber account sign-in behind it
+// usually hasn't: pressing the page's "Log in" goes through auth.uber.com and
+// lands straight back, logged in, with no password — what the user does by
+// hand (Oct 2026: "it was already logged in", on both sites). Do that before
+// ever calling a session dead. Nothing is ever typed: if a credential form
+// shows up instead, we never get back to the site and the login really is gone.
+async function ssoRelogin(page, plat) {
+  // Follow the visible header "Log in" link's address rather than clicking
+  // it: the page also carries hidden duplicates (an off-screen menu) and a
+  // cookie banner, and a click on the wrong copy just times out.
+  const href = await page.evaluate(() => {
+    const isLogin = a => /^(log\s*in|sign\s*in)$/i.test((a.innerText || '').trim());
+    const isAuth = a => /login-redirect|auth\.uber\.com/.test(a.getAttribute('href') || '');
+    const onScreen = a => { const r = a.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.x >= 0 && r.y >= 0; };
+    const links = [...document.querySelectorAll('a[href]')];
+    const pick = links.find(a => isLogin(a) && onScreen(a)) || links.find(a => isAuth(a) && onScreen(a)) || links.find(isLogin);
+    return pick ? pick.href : null;
+  }).catch(() => null);
+  if (!href) return 'failed';
+  try {
+    await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Back on the site, signed in. A password form never returns here.
+    await page.waitForURL(u => plat.onDomain(String(u)) && !/login-redirect/.test(String(u)), { timeout: 30000 });
+    await page.waitForTimeout(2500);
+    const ok = !(await looksLoggedOut(page));
+    state.appendLog({ type: 'sso_relogin', platform: plat.name, ok });
+    return ok ? 'ok' : 'failed';
+  } catch (err) {
+    // Still on Uber's sign-in page = it wants a password: the login is
+    // genuinely gone (definitive, so no point retrying further).
+    const needsLogin = /^https:\/\/auth\.uber\.com\//.test(page.url());
+    state.appendLog({ type: 'sso_relogin', platform: plat.name, ok: false, needsLogin, error: err.message.split('\n')[0].slice(0, 90), url: page.url().slice(0, 80) });
+    return needsLogin ? 'needs_login' : 'failed';
+  }
+}
+
 async function openPromoModal(page, plat) {
   await page.goto(plat.promoUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
@@ -431,9 +467,14 @@ async function openPromoModal(page, plat) {
 
   let modalOpen = false;
   let sawLoggedOut = false;
+  let triedSignIn = false;
   for (let attempt = 0; attempt < 3 && !modalOpen; attempt++) {
     if (attempt > 0) {
-      if (sawLoggedOut && plat.homeUrl) {
+      if (sawLoggedOut && !triedSignIn) {
+        // Press the page's own "Log in" once — usually signs straight back in.
+        triedSignIn = true;
+        if ((await ssoRelogin(page, plat)) === 'needs_login') return 'logged_out';
+      } else if (sawLoggedOut && plat.homeUrl) {
         await page.goto(plat.homeUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
         await page.waitForTimeout(2000);
       }
@@ -857,6 +898,7 @@ async function runApplyCodes(options = {}) {
     page = await getPage(false);
     const results = [];
     let rateLimited = false;
+    let ueGaveUp = false; // an UberEats attempt this run failed even after pressing Log in
 
     for (const code of pending) {
       if (rateLimited) break;
@@ -915,10 +957,11 @@ async function runApplyCodes(options = {}) {
       // UberEats fallback: a code rejected on Postmates for any reason EXCEPT
       // "Code expired" may be a valid UberEats code (many come from r/UberEATS).
       // Retry it on UberEats using the same modal/detection + rate handling.
-      if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired' && getUeSessionValid() === false) {
-        // UberEats is known logged out: an attempt can only fail, and that
-        // failure used to be final — the code never got its UberEats chance.
-        // Park it instead; it's requeued for UberEats once the session is back.
+      if (applyResult.result === 'rejected' && applyResult.detail !== 'Code expired' && ueGaveUp) {
+        // UberEats already failed this run even after pressing Log in: another
+        // attempt can only fail, and that failure used to be final — the code
+        // never got its UberEats chance. Park it; it's requeued for UberEats
+        // once the session is back.
         state.mergeCodeMeta(code, { pendingUberEats: true, ueOnly: false, pmDetail: applyResult.detail });
         state.appendLog({ type: 'ubereats_parked', code, note: 'UberEats logged out — will retry there after login' });
         applyResult = { result: applyResult.result, detail: `${applyResult.detail} · UberEats: retry after login` };
@@ -952,6 +995,7 @@ async function runApplyCodes(options = {}) {
           }
         }
         state.appendLog({ type: 'code_result', code, result: ue.result, detail: ue.detail, platform: 'ubereats' });
+        if (['success', 'rejected', 'region_skip'].includes(ue.result)) requeuePendingUberEats(); // session works — release parked codes
         if (onProgress) onProgress({ code, status: ue.result, detail: ue.detail, platform: 'ubereats' });
 
         if (ue.result === 'ratelimited') {
@@ -978,6 +1022,7 @@ async function runApplyCodes(options = {}) {
                 : 'UberEats attempt errored';
           if (ue.result === 'not_logged_in') {
             state.mergeCodeMeta(code, { pendingUberEats: true, pmDetail: applyResult.detail });
+            ueGaveUp = true;
           }
           applyResult = { result: applyResult.result, detail: `${applyResult.detail} · ${ueNote}` };
           results[results.length - 1] = { code, ...applyResult };

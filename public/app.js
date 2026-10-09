@@ -820,6 +820,7 @@ function eventLabel(type) {
     thread_detect_browser: 'Thread found via browser (Reddit gate)',
     forum_check_done: 'Scan done (forum)',
     run_deadline: 'Run overran — browser recycled',
+    sso_relogin: 'Auto sign-in (pressed Log in)',
     ubereats_parked: 'Held for UberEats (logged out)',
     ubereats_requeue: 'Requeued for UberEats',
     forum_check_error: 'Forum scan error',
@@ -1616,7 +1617,7 @@ function formatLogDetail(entry) {
   if (entry.applied !== undefined) parts.push(`${entry.applied} applied`);
   if (entry.code) parts.push(`code: ${entry.code}`);
   if (Array.isArray(entry.codes)) parts.push(entry.codes.join(', '));
-  if (entry.platform) parts.push(entry.platform === 'ubereats' ? 'UberEats' : 'Postmates');
+  if (entry.platform) parts.push(/ubereats/i.test(entry.platform) ? 'UberEats' : 'Postmates');
   if (entry.result) parts.push(entry.result);
   // Session checks / self-tests carry a boolean verdict + how far the probe got.
   if (typeof entry.ok === 'boolean') parts.push(entry.ok ? 'ok ✓' : 'failed ✗');
